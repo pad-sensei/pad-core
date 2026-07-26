@@ -48,6 +48,51 @@ const SCALES = [
   {id:30, cat:'♪', num:0, name:'Bebop Dorian', pcs:[0,2,3,4,5,7,9,10], cn:[4]},
 ];
 
+// ======== SCALE FULL NAMES (スケールの本名) ========
+// テンションを全部含めたコードネームは、そのスケールの「別名」に過ぎない。
+// スケールを全部押さえたら、この名前のコードになる (アボイドを考慮しなければ、
+// どのモードもコードネームで表せる)。
+//
+// 出典: うりなみさん提供資料 2026-07-26「コードの本名 / テンション・ノートの
+// 順列組み合わせ」+ 公開記事「スケールは和音で作れる」。
+// うりなみさん「コードの本名というか、スケールの本名だよね」。
+//
+// 値の根拠:
+//   - 資料に表があるモード (id 0,1,3,4,5,11 と 16,17,18,20 相当) はその写し
+//   - それ以外は pcs から機械的に導出し、うりなみさんが判定したもの
+//   - 5音スケールは例外的 (うりなみさん「5音スケールでちょっと例外ではあるよね」)。
+//     メジャーペンタ = 6/9、マイナーペンタ = m7(11)、ブルース = マイナーペンタ + ♭5
+//     をテンション表記にした m7(#11, 11)
+//
+// オルタードとホールトーンは完全5度を持たない。同じ音を ♭5 とも #11 とも書けるが、
+// 2つで書き分ける (うりなみさん 2026-07-26):
+//   オルタード   -> (b5)。「実践的には#11というより、5度がないという方が
+//                  アドリブとして大事なの」
+//   ホールトーン -> #11。「#11のほうがみんなわかる。対称スケールと知ってるから」
+//
+// key = SCALES[].id。表に無い id は本名を持たない (未確定であって、無いという
+// 意味ではない)。
+const SCALE_FULL_NAMES = {
+  0:  '\u25b37(13, 11, 9)',        // Major (Ionian)
+  1:  'm7(13, 11, 9)',             // Dorian
+  2:  'm7(b13, 11, b9)',           // Phrygian
+  3:  '\u25b37(13, #11, 9)',       // Lydian
+  4:  '7(13, 11, 9)',              // Mixolydian
+  5:  'm7(b13, 11, 9)',            // Natural Minor (Aeolian)
+  6:  'm7(b5)(b13, 11, b9)',       // Locrian
+  7:  'mMaj7(b13, 11, 9)',         // Harmonic Minor
+  11: '7(b13, 11, b9)',            // Phrygian Dominant
+  14: 'mMaj7(13, 11, 9)',          // Melodic Minor
+  17: '7(13, #11, 9)',             // Lydian b7
+  18: '7(b13, 11, 9)',             // Mixolydian b6
+  20: '7(b5)(b13, #9, b9)',        // Super Locrian (Altered)
+  21: '6/9',                       // Major Pentatonic
+  22: 'm7(11)',                    // Minor Pentatonic
+  23: 'm7(#11, 11)',               // Blues
+  25: '7(b13, #11, 9)',            // Whole Tone
+  26: '7(13, #11, #9, b9)',        // Half-Whole Diminish
+};
+
 // ======== ENHARMONIC SPELLING (circle of fifths) ========
 const KEY_SPELLINGS = [
   NOTE_NAMES_FLAT,  // C  (jazz convention: flats)
@@ -1194,7 +1239,7 @@ padInstallGuitarSourcePatternSeeds();
 // Conditional exports for Node.js (Vitest) — ignored in browser
 if (typeof module !== 'undefined') module.exports = {
   NOTE_NAMES_SHARP, NOTE_NAMES_FLAT, FLAT_MAJOR_KEYS,
-  SCALES, KEY_SPELLINGS,
+  SCALES, SCALE_FULL_NAMES, KEY_SPELLINGS,
   BUILDER_QUALITIES, TENSION_ROWS,
   DEGREE_TO_SEMITONE, PC_TO_TENSION_NAME, TENSION_NAME_TO_PC, SCALE_AVAIL_TENSIONS,
   PAD_ROOT_TO_PC, PAD_QUALITY_INTERVALS, PAD_QUALITY_KEYS, PAD_QUALITY_DISPLAY,
