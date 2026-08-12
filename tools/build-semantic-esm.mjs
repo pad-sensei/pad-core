@@ -7,6 +7,7 @@ const DEFAULT_ROOT = resolve(dirname(TOOL_FILE), '..');
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const COMMONJS_EXPORT_MARKER = "if (typeof module !== 'undefined') module.exports = {";
 const COMMONJS_EXPORT_TAIL = /^if \(typeof module !== 'undefined'\) module\.exports = \{[\s\S]*\};\s*$/;
+const THEORY_NODE_BOOTSTRAP = /\/\/ Node\.js: load data\.js exports into global scope \(browser: already global via script tag\)\s*if \(typeof require !== 'undefined' && typeof SCALES === 'undefined'\) \{\s*Object\.assign\(globalThis, require\('\.\/data\.js'\)\);\s*\}\s*/;
 
 function assertManifest(manifest) {
   if (!manifest || manifest.namespace !== 'PadSenseiTheory') {
@@ -54,6 +55,15 @@ function stripCommonJsExportTail(source, sourceFile) {
   return source.slice(0, markerIndex).trimEnd();
 }
 
+function stripNodeBootstrap(source, sourceFile) {
+  if (sourceFile !== 'theory.js') return source;
+  const matches = source.match(THEORY_NODE_BOOTSTRAP);
+  if (!matches || matches.length !== 1) {
+    throw new Error('theory.js Node bootstrap did not match the expected compatibility block');
+  }
+  return source.replace(THEORY_NODE_BOOTSTRAP, '');
+}
+
 export async function buildSemanticEsm({ rootDir = DEFAULT_ROOT } = {}) {
   const manifestPath = resolve(rootDir, 'semantic-api.manifest.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
@@ -62,7 +72,8 @@ export async function buildSemanticEsm({ rootDir = DEFAULT_ROOT } = {}) {
   const sourceChunks = [];
   for (const sourceFile of manifest.classicSourceLoadOrder) {
     const source = await readFile(resolve(rootDir, sourceFile), 'utf8');
-    const esmSource = stripCommonJsExportTail(source, sourceFile);
+    const noCommonJs = stripCommonJsExportTail(source, sourceFile);
+    const esmSource = stripNodeBootstrap(noCommonJs, sourceFile);
     sourceChunks.push(`// ---- ${sourceFile} ----\n${esmSource}\n`);
   }
 
