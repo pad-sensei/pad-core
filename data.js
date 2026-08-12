@@ -134,7 +134,8 @@ const TENSION_ROWS = [
     {label:'aug', mods:{sharp5:true}},
     {label:'6', mods:{add:[9]}},
     {label:'9', mods:{add:[2]}},
-    {label:'11', mods:{add:[2,5]}},
+    // v1.7: explicit/selected 11 means 11 only. Never complete a hidden 9.
+    {label:'11', mods:{add:[5]}},
     {label:'13', mods:{add:[9]}},
     {label:'(9,13)', mods:{add:[2,9]}},
   ],
@@ -226,14 +227,25 @@ const TENSION_ROWS = [
 // ======== DEGREE NAME ↔ SEMITONE ========
 // Complete mapping: chord tones + tensions + enharmonic aliases (superset of TENSION_NAME_TO_PC)
 var DEGREE_TO_SEMITONE = {
-  '1':0, 'b9':1, '9':2, '#9':3, 'b3':3, '3':4, '11':5,
+  '1':0, 'b9':1, '9':2, '#9':3, 'b3':3, '3':4, 'b11':4, '11':5,
   '#11':6, 'b5':6, '5':7, '#5':8, 'b13':8, '13':9, '6':9,
   'b7':10, '7':11, 'bb7':9
 };
 
 // ======== AVAILABLE TENSIONS PER SCALE ========
 const PC_TO_TENSION_NAME = { 1:'b9', 2:'9', 3:'#9', 5:'11', 6:'#11', 8:'b13', 9:'13' };
-const TENSION_NAME_TO_PC = { 'b9':1, '9':2, '#9':3, '11':5, '#11':6, 'b13':8, '13':9 };
+const TENSION_NAME_TO_PC = { 'b9':1, '9':2, '#9':3, 'b11':4, '11':5, '#11':6, 'b13':8, '13':9 };
+
+// dim7 v1.7 rule: compatibility is a separate possibility layer. Available pcs are
+// exactly a major second above each actual chord-tone pc. This helper does not add
+// those notes to any observed/constructed active-pitch set.
+function padGetDim7AvailableTensionPCs(chordTonePCS) {
+  var tones = Array.from(new Set((chordTonePCS || []).map(function(pc) {
+    return ((pc % 12) + 12) % 12;
+  })));
+  return Array.from(new Set(tones.map(function(pc) { return (pc + 2) % 12; })))
+    .sort(function(a, b) { return a - b; });
+}
 
 const SCALE_AVAIL_TENSIONS = {
   // === Diatonic ===
@@ -279,6 +291,11 @@ var PAD_ROOT_TO_PC = {
   'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11,
 };
 
+// Abstract chord/scale-class shorthands are intentionally not concrete performed
+// pitch sets. A consumer may present them as compatibility concepts, but the concrete
+// parser must not manufacture one arbitrary sounding collection for them.
+var PAD_ABSTRACT_CHORD_SHORTHANDS = new Set(['7alt']);
+
 // Quality string → intervals (semitones from root)
 // Sorted by key length desc for longest-match parsing
 var PAD_QUALITY_INTERVALS = {
@@ -289,6 +306,9 @@ var PAD_QUALITY_INTERVALS = {
   '7(b9,#11)':  [0, 4, 7, 10, 13, 18],
   '7(#9,#11)':  [0, 4, 7, 10, 15, 18],
   '7(9,#11)':   [0, 4, 7, 10, 14, 18],
+  // Builder-visible compound forms whose b11 pitch may duplicate the quality 3rd.
+  '7(b11,b13)': [0, 4, 7, 10, 20],
+  '7sus4(b11,b13)': [0, 5, 7, 10, 16, 20],
   '6(9,#11)':   [0, 4, 7, 9, 14, 18],
   '6.9(#11)':   [0, 4, 7, 9, 14, 18],
   'm6(11)':     [0, 3, 7, 9, 17],
@@ -311,9 +331,9 @@ var PAD_QUALITY_INTERVALS = {
   'm7(13)':     [0, 3, 7, 10, 21],
   'm7(11)':     [0, 3, 7, 10, 17],
   'm7(9)':      [0, 3, 7, 10, 14],
-  // 7 + tension explicit form
-  '7(13)':      [0, 4, 7, 10, 14, 21],
-  '7(11)':      [0, 4, 7, 10, 14, 17],
+  // 7 + explicit tension forms. v1.7: no hidden lower-extension completion.
+  '7(13)':      [0, 4, 7, 10, 21],
+  '7(11)':      [0, 4, 7, 10, 17],
   '7(9)':       [0, 4, 7, 10, 14],
   // Quartal (4th stacking)
   'quartal':    [0, 5, 10, 15],
@@ -329,7 +349,6 @@ var PAD_QUALITY_INTERVALS = {
   'add11':  [0, 4, 7, 17],
   'add9':   [0, 4, 7, 14],
   'aug7':   [0, 4, 8, 10],
-  '7alt':   [0, 4, 6, 10, 13, 15],
   'dim7':   [0, 3, 6, 9],
   'maj9':   [0, 4, 7, 11, 14],
   'maj7':   [0, 4, 7, 11],
@@ -371,8 +390,9 @@ var PAD_QUALITY_INTERVALS = {
   'm9':   [0, 3, 7, 10, 14],
   'm7':   [0, 3, 7, 10],
   'm6':   [0, 3, 7, 9],
-  '13':   [0, 4, 7, 10, 14, 21],
-  '11':   [0, 4, 7, 10, 14, 17],
+  // Bare 11/13 are concrete dominant-7 + explicitly named extension only.
+  '13':   [0, 4, 7, 10, 21],
+  '11':   [0, 4, 7, 10, 17],
   // 1 char
   '9':    [0, 4, 7, 10, 14],
   '7':    [0, 4, 7, 10],
@@ -1243,7 +1263,9 @@ if (typeof module !== 'undefined') module.exports = {
   SCALES, SCALE_FULL_NAMES, KEY_SPELLINGS,
   BUILDER_QUALITIES, TENSION_ROWS,
   DEGREE_TO_SEMITONE, PC_TO_TENSION_NAME, TENSION_NAME_TO_PC, SCALE_AVAIL_TENSIONS,
-  PAD_ROOT_TO_PC, PAD_QUALITY_INTERVALS, PAD_QUALITY_KEYS, PAD_QUALITY_DISPLAY,
+  padGetDim7AvailableTensionPCs,
+  PAD_ROOT_TO_PC, PAD_ABSTRACT_CHORD_SHORTHANDS,
+  PAD_QUALITY_INTERVALS, PAD_QUALITY_KEYS, PAD_QUALITY_DISPLAY,
   GRID, GRID_32, SCALE_DEGREE_NAMES,
   PAD_INST_COLORS, PAD_GUITAR_TUNING, PAD_GUITAR_NAMES, PAD_BASS_TUNING, PAD_BASS_NAMES,
   padBuildChordDetectDB, CHORD_DETECT_DB, TRIAD_DETECT_DB, TETRAD_DETECT_DB,
