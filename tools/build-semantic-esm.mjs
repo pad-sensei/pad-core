@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 const TOOL_FILE = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = resolve(dirname(TOOL_FILE), '..');
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+const COMMONJS_EXPORT_MARKER = "if (typeof module !== 'undefined') module.exports = {";
+const COMMONJS_EXPORT_TAIL = /^if \(typeof module !== 'undefined'\) module\.exports = \{[\s\S]*\};\s*$/;
 
 function assertManifest(manifest) {
   if (!manifest || manifest.namespace !== 'PadSenseiTheory') {
@@ -41,6 +43,17 @@ function assertManifest(manifest) {
   }
 }
 
+function stripCommonJsExportTail(source, sourceFile) {
+  const markerIndex = source.lastIndexOf(COMMONJS_EXPORT_MARKER);
+  if (markerIndex === -1) return source.trimEnd();
+
+  const tail = source.slice(markerIndex);
+  if (!COMMONJS_EXPORT_TAIL.test(tail)) {
+    throw new Error(`refusing to strip non-tail CommonJS export from ${sourceFile}`);
+  }
+  return source.slice(0, markerIndex).trimEnd();
+}
+
 export async function buildSemanticEsm({ rootDir = DEFAULT_ROOT } = {}) {
   const manifestPath = resolve(rootDir, 'semantic-api.manifest.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
@@ -49,7 +62,8 @@ export async function buildSemanticEsm({ rootDir = DEFAULT_ROOT } = {}) {
   const sourceChunks = [];
   for (const sourceFile of manifest.classicSourceLoadOrder) {
     const source = await readFile(resolve(rootDir, sourceFile), 'utf8');
-    sourceChunks.push(`// ---- ${sourceFile} ----\n${source.trimEnd()}\n`);
+    const esmSource = stripCommonJsExportTail(source, sourceFile);
+    sourceChunks.push(`// ---- ${sourceFile} ----\n${esmSource}\n`);
   }
 
   const namedExports = manifest.symbols
