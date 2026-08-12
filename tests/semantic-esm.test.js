@@ -39,6 +39,7 @@ describe('generated semantic ESM feasibility', () => {
       expect(first.code).toContain(`export const ${symbol.public} = PadSenseiTheory.${symbol.public};`);
     }
     expect(first.code).not.toContain('render.js');
+    expect(first.code).not.toContain('module.exports');
   });
 
   it('imports without global pollution and preserves v1.7 semantics', async () => {
