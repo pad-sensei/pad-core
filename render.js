@@ -47,10 +47,13 @@ function padDegreeName(interval, qualityPCS) {
       if (qualityPCS && qualityPCS.includes(8)) return '#5';
       return 'b13';
     case 9:
+      if (qualityPCS && qualityPCS.includes(3) && qualityPCS.includes(6) &&
+          qualityPCS.includes(9) && !qualityPCS.includes(10)) return 'bb7';
       if (qualityPCS && qualityPCS.includes(9) && !qualityPCS.includes(10) && !qualityPCS.includes(11)) return '6';
       return '13';
     case 10: return 'b7';
     case 11: return '\u25B37';
+    case 21: return '13';
   }
   return '';
 }

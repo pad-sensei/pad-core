@@ -243,6 +243,10 @@ function padUpdateTensionVisibility(btns, quality, applyTensionFn, opts) {
         // Chord-tone duplicates are handled as no-ops above; any genuinely added pc
         // outside that set is not an available dim7 tension and stays out of Builder UI.
         if (isDim7 && m.add) {
+          // Natural 13 is a separately registered constructed voicing, never an
+          // available dim7 tension button. Compound explicit forms retain their
+          // own register metadata through padApplyTension.
+          if (btn._tension.label === '13') { btn.classList.add('quality-hidden'); return; }
           var basePcs = new Set(quality.pcs.map(function(pc) { return ((pc % 12) + 12) % 12; }));
           for (var di = 0; di < m.add.length; di++) {
             var dpc = ((m.add[di] % 12) + 12) % 12;
