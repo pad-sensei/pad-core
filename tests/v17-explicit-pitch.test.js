@@ -118,6 +118,17 @@ describe('v1.7 explicit-pitch contract', () => {
     });
   });
 
+  it('marks null or undefined Builder tension as non-explicit, matching MIDI detection', () => {
+    const base = [0, 3, 6, 9];
+    for (const tension of [null, undefined]) {
+      expect(padBuildChordPayload(base, tension)).toMatchObject({
+        tensionLabels: [], chordPCS: base, chordIntervals: base,
+        tensionPCS: [], tensionIntervals: [],
+        register: { explicit: false, intervals: [] }, explicitIntent: false,
+      });
+    }
+  });
+
   it('uses the structured tension labels supplied by every Builder definition', () => {
     const expected = {
       '6(9)': ['6', '9'],
