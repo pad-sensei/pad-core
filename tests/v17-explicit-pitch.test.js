@@ -210,6 +210,28 @@ describe('v1.7 explicit-pitch contract', () => {
     expect(names.some(name => /^C7\([^)]*(9|11)[^)]*13/.test(name))).toBe(false);
   });
 
+  it('gives ordinary detected chords the structured payload without reparsing their display names', () => {
+    const candidate = padDetectChord([60, 63, 67, 70, 77])
+      .find(result => result.name === 'Cm7(11)');
+    expect(candidate).toMatchObject({
+      quality: 'm7', tensionLabels: ['11'],
+      chordPCS: [0, 3, 5, 7, 10], chordIntervals: [0, 3, 7, 10, 17],
+      tensionPCS: [5], tensionIntervals: [17],
+      register: { explicit: false, intervals: [] }, explicitIntent: false,
+    });
+  });
+
+  it('keeps the structured schema on every detector result, including slash candidates', () => {
+    for (const candidate of padDetectChord([60, 64, 67, 70, 74, 77])) {
+      expect(candidate).toHaveProperty('quality');
+      expect(candidate).toMatchObject({
+        tensionLabels: expect.any(Array), chordPCS: expect.any(Array), chordIntervals: expect.any(Array),
+        tensionPCS: expect.any(Array), tensionIntervals: expect.any(Array),
+        register: { explicit: false, intervals: [] }, explicitIntent: false,
+      });
+    }
+  });
+
   it('possibility data cannot become active/rendered pitch state', () => {
     const active = new Set([0, 3, 6, 9]);
     const available = padGetDim7AvailableTensionPCs([...active]);

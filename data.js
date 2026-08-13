@@ -506,14 +506,19 @@ const PAD_BASS_NAMES  = ['G', 'D', 'A', 'E'];
 
 function padBuildChordDetectDB() {
   var db = [];
+  var DETECT_TENSION_INTERVALS = { b9:13, '9':14, '#9':15, '11':17, '#11':18, b13:20, '13':21 };
   BUILDER_QUALITIES.flat().forEach(function(q) {
     if (!q) return;
-    db.push({ name: q.name || 'Maj', pcs: q.pcs, pcsSet: new Set(q.pcs) });
+    db.push({
+      name: q.name || 'Maj', quality: q.name || 'Maj', pcs: q.pcs, pcsSet: new Set(q.pcs),
+      chordPCS: q.pcs.slice(), chordIntervals: q.pcs.slice(), tensionLabels: [], tensionPCS: [], tensionIntervals: [],
+    });
   });
 
   // sus2 is not a builder quality (it is an inversion of the sus4 a 5th up),
   // but it should still be recognized by chord detection.
-  db.push({ name: 'sus2', pcs: [0, 2, 7], pcsSet: new Set([0, 2, 7]) });
+  db.push({ name: 'sus2', quality: 'sus2', pcs: [0, 2, 7], pcsSet: new Set([0, 2, 7]),
+    chordPCS: [0, 2, 7], chordIntervals: [0, 2, 7], tensionLabels: [], tensionPCS: [], tensionIntervals: [] });
 
   function addGeneratedTensionChords(baseName, basePcs, groups) {
     function search(groupIdx, picked) {
@@ -526,8 +531,14 @@ function padBuildChordDetectDB() {
         });
         db.push({
           name: baseName + '(' + picked.join(',') + ')',
+          quality: baseName,
           pcs: pcs,
-          pcsSet: new Set(pcs)
+          pcsSet: new Set(pcs),
+          chordPCS: pcs.slice().sort(function(a, b) { return a - b; }),
+          chordIntervals: basePcs.concat(picked.map(function(label) { return DETECT_TENSION_INTERVALS[label]; })).sort(function(a, b) { return a - b; }),
+          tensionLabels: picked.slice(),
+          tensionPCS: picked.map(function(label) { return TENSION_NAME_TO_PC[label]; }).sort(function(a, b) { return a - b; }),
+          tensionIntervals: picked.map(function(label) { return DETECT_TENSION_INTERVALS[label]; }).sort(function(a, b) { return a - b; }),
         });
         return;
       }
@@ -671,7 +682,12 @@ function padBuildChordDetectDB() {
     { name: 'madd#11', pcs: [0,3,7,6] },
   ];
   tensionChords.forEach(function(c) {
-    db.push({ name: c.name, pcs: c.pcs, pcsSet: new Set(c.pcs) });
+    // These legacy literal entries have no selected-builder provenance. Keep a
+    // complete, non-explicit schema without recovering it from their display name.
+    db.push({ name: c.name, quality: c.name, pcs: c.pcs, pcsSet: new Set(c.pcs),
+      chordPCS: c.pcs.slice().sort(function(a, b) { return a - b; }),
+      chordIntervals: c.pcs.slice().sort(function(a, b) { return a - b; }),
+      tensionLabels: [], tensionPCS: [], tensionIntervals: [] });
   });
   return db;
 }
