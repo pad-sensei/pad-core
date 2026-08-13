@@ -2224,23 +2224,9 @@ function padDetectChord(midiNotes, spellingKey) {
     }
   }
 
-  // 6th + 7th → 13th tension rename
-  for (var i = 0; i < candidates.length; i++) {
-    var c = candidates[i];
-    var rootIntervals = {};
-    for (var j = 0; j < pcs.length; j++) {
-      rootIntervals[((pcs[j] - c.rootPC) + 12) % 12] = true;
-    }
-    var has7th = rootIntervals[10] || rootIntervals[11];
-    if (has7th) {
-      var is7 = rootIntervals[10];
-      var sfx = is7 ? '7' : 'Maj7';
-      c.name = c.name.replace(/^([A-G]#?)6\/9(\(omit5\))?/, '$1' + sfx + '(9,13)');
-      c.name = c.name.replace(/^([A-G]#?)m6\/9(\(omit5\))?/, '$1m' + sfx + '(9,13)');
-      c.name = c.name.replace(/^([A-G]#?)6(\(omit5\))?/, '$1' + sfx + '(13)');
-      c.name = c.name.replace(/^([A-G]#?)m6(\(omit5\))?/, '$1m' + sfx + '(13)');
-    }
-  }
+  // Chord-detect DB candidates already carry canonical semantic metadata.
+  // Do not rewrite only display names here: that would desynchronize name,
+  // quality, and exact tension intervals while also creating duplicates.
 
   candidates.sort(function(a, b) { return b.score - a.score; });
   function pinB7HybridNearTop(suffix, thirdFromBass) {

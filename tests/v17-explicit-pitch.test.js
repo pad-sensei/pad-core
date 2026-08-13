@@ -221,6 +221,17 @@ describe('v1.7 explicit-pitch contract', () => {
     });
   });
 
+  it('does not apply a post-detection 6-to-13 display rewrite that can stale structured metadata', () => {
+    const candidates = padDetectChord([60, 64, 67, 69, 70]);
+    const dominant13 = candidates.filter(candidate => candidate.name === 'C7(13)');
+    expect(dominant13).toHaveLength(1);
+    expect(dominant13[0]).toMatchObject({
+      quality: '7', tensionLabels: ['13'], chordPCS: [0, 4, 7, 9, 10],
+      chordIntervals: [0, 4, 7, 10, 21], tensionPCS: [9], tensionIntervals: [21],
+    });
+    expect(candidates.some(candidate => /6\(9\).*\(13\)|\(13\).*\(9\)/.test(candidate.name))).toBe(false);
+  });
+
   it('keeps the structured schema on every detector result, including slash candidates', () => {
     for (const candidate of padDetectChord([60, 64, 67, 70, 74, 77])) {
       expect(candidate).toHaveProperty('quality');
