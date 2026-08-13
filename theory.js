@@ -72,7 +72,7 @@ function padParseChordName(input) {
         var TENSION_MAP = {
           '9': 14, 'b9': 13, '#9': 15,
           '11': 17, '#11': 18,
-          '13': 21, 'b13': 20,
+          '13': 21, 'b13': 20, '7': 23,
           '#5': 8, 'b5': 6,
         };
         var baseIntervals = PAD_QUALITY_INTERVALS[baseQ].slice();
@@ -200,12 +200,47 @@ function padApplyTension(basePCS, mods) {
   if (mods.add) {
     for (var k = 0; k < mods.add.length; k++) {
       var addPC = mods.add[k];
-      if (!pcs.some(function(p) { return p % 12 === addPC; })) pcs.push(addPC + 12);
+      var preserveRegister = mods.registerAdd && mods.registerAdd.indexOf(addPC) >= 0;
+      if (preserveRegister) {
+        // A selected explicit extension can share a pitch class with a symmetric
+        // chord tone. Keep its compound register as voicing information.
+        if (!pcs.includes(addPC + 12)) pcs.push(addPC + 12);
+      } else if (!pcs.some(function(p) { return p % 12 === addPC; })) {
+        pcs.push(addPC + 12);
+      }
     }
   }
   if (mods.omit3) { pcs = pcs.filter(function(p) { return p !== 3 && p !== 4; }); }
   if (mods.omit5) { pcs = pcs.filter(function(p) { return p !== 6 && p !== 7 && p !== 8; }); }
   return pcs.sort(function(a, b) { return a - b; });
+}
+
+// Builder-facing structured payload. It preserves selected compound register
+// information so consumers never need to recover intent from a display name.
+function padBuildChordPayload(basePCS, tension) {
+  var mods = (tension && tension.mods) || {};
+  var chordIntervals = padApplyTension(basePCS, mods);
+  var chordPCS = Array.from(new Set(chordIntervals.map(function(interval) {
+    return ((interval % 12) + 12) % 12;
+  }))).sort(function(a, b) { return a - b; });
+  var tensionIntervals = chordIntervals.filter(function(interval) {
+    return interval >= 12 || basePCS.indexOf(interval) < 0;
+  });
+  var tensionPCS = Array.from(new Set(tensionIntervals.map(function(interval) {
+    return ((interval % 12) + 12) % 12;
+  }))).sort(function(a, b) { return a - b; });
+  var registerIntervals = tensionIntervals.filter(function(interval) {
+    return mods.registerAdd && mods.registerAdd.indexOf(((interval % 12) + 12) % 12) >= 0;
+  });
+  return {
+    tensionLabels: (tension && tension.tensionLabels ? tension.tensionLabels.slice() : []),
+    chordPCS: chordPCS,
+    chordIntervals: chordIntervals,
+    tensionPCS: tensionPCS,
+    tensionIntervals: tensionIntervals,
+    register: { explicit: true, intervals: registerIntervals },
+    explicitIntent: true,
+  };
 }
 
 // ======== VOICING CALCULATION ========
@@ -1974,15 +2009,16 @@ function padDetectChord(midiNotes, spellingKey) {
   var candidates = [];
   var seenNames = {};
   var lowestHasShell = padHasBassShell(pcs, lowestPC);
-  function padPushOrBumpCandidate(name, rootPC, score) {
+  function padPushOrBumpCandidate(name, rootPC, score, details) {
     for (var ci = 0; ci < candidates.length; ci++) {
       if (candidates[ci].name === name) {
         candidates[ci].score = Math.max(candidates[ci].score || 0, score);
+        if (details) Object.assign(candidates[ci], details);
         return;
       }
     }
     seenNames[name] = true;
-    candidates.push({ name: name, rootPC: rootPC, score: score });
+    candidates.push(Object.assign({ name: name, rootPC: rootPC, score: score }, details || {}));
   }
 
   for (var ri = 0; ri < pcs.length; ri++) {
@@ -2009,10 +2045,16 @@ function padDetectChord(midiNotes, spellingKey) {
           var rootName = padPreferredRootNoteName(rootPC, spellingKey);
           var bass = lowestPC !== rootPC ? ' / ' + padChordIntervalNoteName(rootPC, lowestPC) : '';
           var name = rootName + chord.name + bass;
-          if (!seenNames[name]) {
-            seenNames[name] = true;
-            candidates.push({ name: name, rootPC: rootPC, score: score });
-          }
+          if (!seenNames[name]) padPushOrBumpCandidate(name, rootPC, score, chord.tensionIntervals ? {
+            quality: 'dim7',
+            tensionLabels: chord.tensionLabels.slice(),
+            chordPCS: chord.chordPCS.slice(),
+            chordIntervals: chord.chordIntervals.slice(),
+            tensionPCS: chord.tensionPCS.slice(),
+            tensionIntervals: chord.tensionIntervals.slice(),
+            register: { explicit: false, intervals: [] },
+            explicitIntent: false,
+          } : null);
         }
       }
       // Omit5 match: 4+ note chords containing 5th (7) — also check without 5th
@@ -2042,10 +2084,16 @@ function padDetectChord(midiNotes, spellingKey) {
             var hasShell = (intervals[3] || intervals[4]) && (intervals[10] || intervals[11]);
             var omitLabel = (chord.pcs.length >= 5 || hasShell) ? '' : '(omit5)';
             var name = rootName + chord.name + omitLabel + bass;
-            if (!seenNames[name]) {
-              seenNames[name] = true;
-              candidates.push({ name: name, rootPC: rootPC, score: score });
-            }
+            if (!seenNames[name]) padPushOrBumpCandidate(name, rootPC, score, chord.tensionIntervals ? {
+              quality: 'dim7',
+              tensionLabels: chord.tensionLabels.slice(),
+              chordPCS: chord.chordPCS.slice(),
+              chordIntervals: chord.chordIntervals.slice(),
+              tensionPCS: chord.tensionPCS.slice(),
+              tensionIntervals: chord.tensionIntervals.slice(),
+              register: { explicit: false, intervals: [] },
+              explicitIntent: false,
+            } : null);
           }
         }
       }
@@ -2329,7 +2377,7 @@ function padClassifyColor(classification, theme) {
 if (typeof module !== 'undefined') module.exports = {
   padParseRoot, padParseChordName,
   padPitchClass, padGetParentMajorKey, padPcName, padNoteNameForKey,
-  padFifthsDistance, padApplyTension,
+  padFifthsDistance, padApplyTension, padBuildChordPayload,
   padCalcVoicingOffsets, padGetBassCase, padApplyOnChordBass,
   padGetShellIntervals, padCalcAllVoicingPositions, padFindCompactPositions,
   padChordContextKey, padGetBuilderChordName,
