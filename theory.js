@@ -218,6 +218,7 @@ function padApplyTension(basePCS, mods) {
 // Builder-facing structured payload. It preserves selected compound register
 // information so consumers never need to recover intent from a display name.
 function padBuildChordPayload(basePCS, tension) {
+  var explicitIntent = !!tension;
   var mods = (tension && tension.mods) || {};
   var chordIntervals = padApplyTension(basePCS, mods);
   var chordPCS = Array.from(new Set(chordIntervals.map(function(interval) {
@@ -238,8 +239,8 @@ function padBuildChordPayload(basePCS, tension) {
     chordIntervals: chordIntervals,
     tensionPCS: tensionPCS,
     tensionIntervals: tensionIntervals,
-    register: { explicit: true, intervals: registerIntervals },
-    explicitIntent: true,
+    register: { explicit: explicitIntent, intervals: registerIntervals },
+    explicitIntent: explicitIntent,
   };
 }
 
