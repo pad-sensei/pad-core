@@ -2011,6 +2011,7 @@ function padDetectChord(midiNotes, spellingKey) {
   var seenNames = {};
   var lowestHasShell = padHasBassShell(pcs, lowestPC);
   function padPushOrBumpCandidate(name, rootPC, score, details) {
+    details = details || padSimpleDetectDetails('unknown', []);
     for (var ci = 0; ci < candidates.length; ci++) {
       if (candidates[ci].name === name) {
         candidates[ci].score = Math.max(candidates[ci].score || 0, score);
@@ -2019,7 +2020,30 @@ function padDetectChord(midiNotes, spellingKey) {
       }
     }
     seenNames[name] = true;
-    candidates.push(Object.assign({ name: name, rootPC: rootPC, score: score }, details || {}));
+    candidates.push(Object.assign({ name: name, rootPC: rootPC, score: score }, details));
+  }
+
+  function padSimpleDetectDetails(quality, chordPCS) {
+    var pcs = (chordPCS || []).slice().sort(function(a, b) { return a - b; });
+    return {
+      quality: quality,
+      tensionLabels: [], chordPCS: pcs, chordIntervals: pcs.slice(),
+      tensionPCS: [], tensionIntervals: [],
+      register: { explicit: false, intervals: [] }, explicitIntent: false,
+    };
+  }
+
+  function padDetectDetails(chord) {
+    return {
+      quality: chord.quality,
+      tensionLabels: chord.tensionLabels.slice(),
+      chordPCS: chord.chordPCS.slice(),
+      chordIntervals: chord.chordIntervals.slice(),
+      tensionPCS: chord.tensionPCS.slice(),
+      tensionIntervals: chord.tensionIntervals.slice(),
+      register: { explicit: false, intervals: [] },
+      explicitIntent: false,
+    };
   }
 
   for (var ri = 0; ri < pcs.length; ri++) {
@@ -2046,16 +2070,7 @@ function padDetectChord(midiNotes, spellingKey) {
           var rootName = padPreferredRootNoteName(rootPC, spellingKey);
           var bass = lowestPC !== rootPC ? ' / ' + padChordIntervalNoteName(rootPC, lowestPC) : '';
           var name = rootName + chord.name + bass;
-          if (!seenNames[name]) padPushOrBumpCandidate(name, rootPC, score, chord.tensionIntervals ? {
-            quality: 'dim7',
-            tensionLabels: chord.tensionLabels.slice(),
-            chordPCS: chord.chordPCS.slice(),
-            chordIntervals: chord.chordIntervals.slice(),
-            tensionPCS: chord.tensionPCS.slice(),
-            tensionIntervals: chord.tensionIntervals.slice(),
-            register: { explicit: false, intervals: [] },
-            explicitIntent: false,
-          } : null);
+          if (!seenNames[name]) padPushOrBumpCandidate(name, rootPC, score, padDetectDetails(chord));
         }
       }
       // Omit5 match: 4+ note chords containing 5th (7) — also check without 5th
@@ -2085,16 +2100,7 @@ function padDetectChord(midiNotes, spellingKey) {
             var hasShell = (intervals[3] || intervals[4]) && (intervals[10] || intervals[11]);
             var omitLabel = (chord.pcs.length >= 5 || hasShell) ? '' : '(omit5)';
             var name = rootName + chord.name + omitLabel + bass;
-            if (!seenNames[name]) padPushOrBumpCandidate(name, rootPC, score, chord.tensionIntervals ? {
-              quality: 'dim7',
-              tensionLabels: chord.tensionLabels.slice(),
-              chordPCS: chord.chordPCS.slice(),
-              chordIntervals: chord.chordIntervals.slice(),
-              tensionPCS: chord.tensionPCS.slice(),
-              tensionIntervals: chord.tensionIntervals.slice(),
-              register: { explicit: false, intervals: [] },
-              explicitIntent: false,
-            } : null);
+            if (!seenNames[name]) padPushOrBumpCandidate(name, rootPC, score, padDetectDetails(chord));
           }
         }
       }
@@ -2130,7 +2136,7 @@ function padDetectChord(midiNotes, spellingKey) {
             var isB7OverBassHybrid = ((triadRoot - lowestPC + 12) % 12) === 10;
             if (!(lowestHasShell && isB7OverBassHybrid)) {
               var score = isTriadRoot ? 125 : (!isSlashInversion ? 144 : 25);
-              padPushOrBumpCandidate(name, triadRoot, score);
+              padPushOrBumpCandidate(name, triadRoot, score, padSimpleDetectDetails(triad.name, triad.pcs));
             }
           }
         }
@@ -2159,7 +2165,8 @@ function padDetectChord(midiNotes, spellingKey) {
         var hybridAlreadyListed = candidates.some(function(c) { return c.name === hybridName; });
         if (!hybridAlreadyListed) {
           seenNames[hybridName] = true;
-          candidates.push({ name: hybridName, rootPC: hybridRoot, score: 144 });
+          padPushOrBumpCandidate(hybridName, hybridRoot, 144,
+            padSimpleDetectDetails(hybridQuality.suffix || 'Maj', [0, hybridQuality.third, 7]));
         }
       }
     });
@@ -2175,7 +2182,8 @@ function padDetectChord(midiNotes, spellingKey) {
     var name3 = padPreferredRootNoteName(rootPC3, spellingKey) + suffix + ' / ' + padChordIntervalNoteName(rootPC3, lowestPC);
     if (!candidates.some(function(c) { return c.name === name3; })) {
       seenNames[name3] = true;
-      candidates.push({ name: name3, rootPC: rootPC3, score: 144 });
+      padPushOrBumpCandidate(name3, rootPC3, 144,
+        padSimpleDetectDetails(suffix || 'Maj', [0, thirdFromBass === 2 ? 4 : 3, 7]));
     }
   }
   ensureB7HybridFromBass('', 2);
@@ -2209,7 +2217,7 @@ function padDetectChord(midiNotes, spellingKey) {
             var name = tetName + ' / ' + bassName;
             var isSlashInversion = tet.pcs.indexOf(((lowestPC - tetRoot) + 12) % 12) !== -1;
             var score = isSlashInversion ? 30 + tet.pcs.length * 5 : 144;
-            padPushOrBumpCandidate(name, tetRoot, score);
+            padPushOrBumpCandidate(name, tetRoot, score, padSimpleDetectDetails(tet.name, tet.pcs));
           }
         }
       }
