@@ -9,9 +9,7 @@ let theoryTest = fs.readFileSync(theoryTestPath, 'utf8');
 
 function replaceOnce(text, from, to, label) {
   const count = text.split(from).length - 1;
-  if (count !== 1) {
-    throw new Error(`${label}: expected exactly one match, found ${count}`);
-  }
+  if (count !== 1) throw new Error(`${label}: expected exactly one match, found ${count}`);
   return text.replace(from, to);
 }
 
@@ -25,15 +23,12 @@ function replaceRegexOnce(text, regex, to, label) {
 
 function removeExactCount(text, needle, expected, label) {
   const count = text.split(needle).length - 1;
-  if (count !== expected) {
-    throw new Error(`${label}: expected ${expected} matches, found ${count}`);
-  }
+  if (count !== expected) throw new Error(`${label}: expected ${expected} matches, found ${count}`);
   return text.split(needle).join('');
 }
 
-// Remove theory-based hard suppression helpers. The detector may rank candidates,
-// but it must not erase an observed pitch or a candidate merely because the
-// interpretation is unusual.
+// Remove theory-based hard suppression. Slash-candidate logic is retained only
+// as a ranking preference: unusual readings stay eligible and visible.
 theory = replaceRegexOnce(
   theory,
   /function padRejectMinorSeventhFlat13\(chordName, intervals\) \{[\s\S]*?\n\}\n\n/,
@@ -52,11 +47,11 @@ theory = replaceRegexOnce(
   '',
   'remove split-third early rejection helper'
 );
-theory = replaceRegexOnce(
+theory = replaceOnce(
   theory,
-  /function padIsAllowedSlashChordCandidate\(qualityName, qualityPcs, upperRootPC, bassPC\) \{[\s\S]*?\n\}\n\n/,
-  '',
-  'remove slash whitelist helper'
+  'function padIsAllowedSlashChordCandidate(qualityName, qualityPcs, upperRootPC, bassPC) {',
+  'function padIsPreferredSlashChordCandidate(qualityName, qualityPcs, upperRootPC, bassPC) {',
+  'reframe slash whitelist as preference'
 );
 
 const augHelper = `function padAugAlteredPenalty(chordName, intervals) {
@@ -130,10 +125,26 @@ function padAppendDetectionObservedLabels(name, labels) {
   return name + omit5 + slash;
 }
 
+function padDetectionCoverageBonus(candidate, observedPCS, lowestPC) {
+  var observed = {};
+  for (var i = 0; i < observedPCS.length; i++) observed[observedPCS[i]] = true;
+  var chordPCS = candidate.chordPCS || [];
+  var matched = 0;
+  var missing = 0;
+  for (var ci = 0; ci < chordPCS.length; ci++) {
+    var absolutePC = (candidate.rootPC + chordPCS[ci]) % 12;
+    if (observed[absolutePC]) matched++;
+    else missing++;
+  }
+  var bonus = matched * 16 - missing * 12;
+  if (matched >= 4) bonus += 28;
+  if (candidate.rootPC === lowestPC) bonus += 10;
+  return bonus;
+}
+
 function padFinalizeObservedCandidate(candidate, observedPCS, lowestPC) {
   var exactObserved = observedPCS.slice().sort(function(a, b) { return a - b; });
   candidate.observedPCS = exactObserved;
-  // Long-form alias for consumers that prefer an explicit field name.
   candidate.observedPitchClasses = exactObserved.slice();
   candidate.observedBassPC = lowestPC;
 
@@ -147,9 +158,6 @@ function padFinalizeObservedCandidate(candidate, observedPCS, lowestPC) {
   for (var i = 0; i < candidatePCS.length; i++) {
     represented[((candidatePCS[i] % 12) + 12) % 12] = true;
   }
-
-  // A non-chord-tone slash bass is already explicitly represented by /Bass;
-  // do not duplicate it as a tension label.
   if (candidate.name.indexOf(' / ') >= 0 && candidate.rootPC !== lowestPC) {
     represented[((lowestPC - candidate.rootPC) + 12) % 12] = true;
   }
@@ -185,14 +193,12 @@ function padFinalizeObservedCandidate(candidate, observedPCS, lowestPC) {
 `;
 
 theory = replaceOnce(theory, augHelper, augHelper + transparencyHelpers, 'insert transparency helpers');
-
 theory = replaceOnce(
   theory,
   '  if (padIsUnnameableMajorSplitThirdColor(pcs, lowestPC)) return [];\n',
   '',
   'remove split-third early return'
 );
-
 theory = removeExactCount(
   theory,
   '          if (padRejectMinorSeventhFlat13(chord.name, intervals)) continue;\n',
@@ -211,17 +217,18 @@ theory = replaceOnce(
   "            var omitLabel = '(omit5)';\n",
   'make omit5 factual'
 );
-theory = removeExactCount(
+
+theory = replaceOnce(
   theory,
   '            if (!padIsAllowedSlashChordCandidate(triad.name, triad.pcs, triadRoot, lowestPC)) continue;\n',
-  1,
-  'remove triad slash whitelist'
+  '            var slashPreferencePenalty = padIsPreferredSlashChordCandidate(triad.name, triad.pcs, triadRoot, lowestPC) ? 0 : 80;\n',
+  'convert triad slash whitelist to ranking'
 );
 theory = replaceOnce(
   theory,
   "            var isB7OverBassHybrid = ((triadRoot - lowestPC + 12) % 12) === 10;\n            if (!(lowestHasShell && isB7OverBassHybrid)) {\n              var score = isTriadRoot ? 125 : (!isSlashInversion ? 144 : 25);\n              padPushOrBumpCandidate(name, triadRoot, score, padSimpleDetectDetails(triad.name, triad.pcs));\n            }\n",
-  "            var score = isTriadRoot ? 125 : (!isSlashInversion ? 144 : 25);\n            padPushOrBumpCandidate(name, triadRoot, score, padSimpleDetectDetails(triad.name, triad.pcs));\n",
-  'remove bass-shell hybrid suppression'
+  "            var score = (isTriadRoot ? 125 : (!isSlashInversion ? 144 : 25)) - slashPreferencePenalty;\n            padPushOrBumpCandidate(name, triadRoot, score, padSimpleDetectDetails(triad.name, triad.pcs));\n",
+  'remove bass-shell hybrid suppression while preserving ranking'
 );
 theory = replaceOnce(
   theory,
@@ -235,17 +242,31 @@ theory = removeExactCount(
   2,
   'remove lowest-shell guards'
 );
-theory = removeExactCount(
+
+theory = replaceOnce(
   theory,
   '            if (!padIsAllowedSlashChordCandidate(tet.name, tet.pcs, tetRoot, lowestPC)) continue;\n',
-  1,
-  'remove tetrad slash whitelist'
+  '            var slashPreferencePenalty = padIsPreferredSlashChordCandidate(tet.name, tet.pcs, tetRoot, lowestPC) ? 0 : 80;\n',
+  'convert tetrad slash whitelist to ranking'
 );
 theory = removeExactCount(
   theory,
   "            if (lowestHasShell && tet.name === '7') continue;\n",
   1,
   'remove dominant tetrad shell suppression'
+);
+theory = replaceOnce(
+  theory,
+  "            var score = isSlashInversion ? 30 + tet.pcs.length * 5 : 144;\n",
+  "            var score = (isSlashInversion ? 30 + tet.pcs.length * 5 : 144) - slashPreferencePenalty;\n",
+  'rank nonpreferred tetrad slash candidates lower'
+);
+
+theory = replaceOnce(
+  theory,
+  "  candidates.sort(function(a, b) { return b.score - a.score; });\n",
+  "  for (var ri = 0; ri < candidates.length; ri++) {\n    candidates[ri].score += padDetectionCoverageBonus(candidates[ri], pcs, lowestPC);\n  }\n  candidates.sort(function(a, b) { return b.score - a.score; });\n",
+  'rank richer observed coverage ahead'
 );
 theory = replaceOnce(
   theory,
@@ -256,9 +277,40 @@ theory = replaceOnce(
 theory = replaceOnce(
   theory,
   "  pinB7HybridNearTop('', 2);\n  pinB7HybridNearTop('m', 1);\n  return candidates.slice(0, 8);\n",
-  "  pinB7HybridNearTop('', 2);\n  pinB7HybridNearTop('m', 1);\n  for (var oi = 0; oi < candidates.length; oi++) {\n    padFinalizeObservedCandidate(candidates[oi], pcs, lowestPC);\n  }\n  return candidates.slice(0, 8);\n",
-  'attach exact observed pitch classes to every candidate'
+  "  pinB7HybridNearTop('', 2);\n  pinB7HybridNearTop('m', 1);\n  var finalized = [];\n  var seenFinal = {};\n  for (var oi = 0; oi < candidates.length; oi++) {\n    var candidate = padFinalizeObservedCandidate(candidates[oi], pcs, lowestPC);\n    var finalKey = candidate.rootPC + '|' + candidate.name;\n    if (seenFinal[finalKey]) continue;\n    seenFinal[finalKey] = true;\n    finalized.push(candidate);\n  }\n  return finalized.slice(0, 8);\n",
+  'attach exact observations and deduplicate final labels'
 );
+
+const oldAltered = `    it('C altered dominant colors are not represented as Caug', () => {
+      var results = padDetectChord([60, 61, 63, 64, 68, 70]);
+      expect(results[0].name).toBe('C7(b9,#9,b13)');
+      expect(results[0].name).not.toBe('Caug');
+    });`;
+const newAltered = `    it('C altered dominant colors are not represented as Caug', () => {
+      var results = padDetectChord([60, 61, 63, 64, 68, 70]);
+      expect(results[0].name).toBe('C7(b9,#9,b13)(omit5)');
+      expect(results[0].name).not.toBe('Caug');
+    });`;
+theoryTest = replaceOnce(theoryTest, oldAltered, newAltered, 'make altered omit5 expectation factual');
+
+const oldSplit = `    it('does not force a chord name onto major seventh split-third colors', () => {
+      expect(padDetectChord([60, 63, 64, 69, 71])).toEqual([]);
+    });
+    it('does not force a chord name when flat seventh and major seventh coexist', () => {
+      expect(padDetectChord([60, 64, 67, 70, 71])).toEqual([]);
+    });`;
+const newSplit = `    it('keeps split-third colors detectable with candidate-local #9 interpretation', () => {
+      const results = padDetectChord([60, 63, 64, 69, 71]);
+      expect(results.length).toBeGreaterThan(0);
+      expect(results.some(r => r.rootPC === 0 && r.name.includes('#9'))).toBe(true);
+    });
+    it('keeps simultaneous flat seventh and major seventh detectable', () => {
+      const results = padDetectChord([60, 64, 67, 70, 71]);
+      expect(results.length).toBeGreaterThan(0);
+      expect(results.some(r => r.name === 'C7(Maj7)')).toBe(true);
+      expect(results.some(r => r.name === 'CMaj7(b7)')).toBe(true);
+    });`;
+theoryTest = replaceOnce(theoryTest, oldSplit, newSplit, 'update split-third and dual-seventh regressions');
 
 const oldBm7Test = `    it('B,G,A,D is Gadd9 / B, not Bm7(b13)', () => {
       const results = padDetectChord([59, 67, 69, 74]);
@@ -271,6 +323,16 @@ const newBm7Test = `    it('B,G,A,D keeps Gadd9 / B first while retaining Bm7(b1
       expect(results.some(r => r.name.startsWith('Bm7(b13)'))).toBe(true);
     });`;
 theoryTest = replaceOnce(theoryTest, oldBm7Test, newBm7Test, 'update Bm7(b13) regression ruling');
+
+const oldPedal = `    it('does not list non-functional pedal triads as slash candidates', () => {
+      const results = padDetectChord([60, 62, 66, 69]);
+      expect(results.some(r => r.name === 'D / C')).toBe(false);
+    });`;
+const newPedal = `    it('retains non-functional pedal triads as lower-ranked slash candidates', () => {
+      const results = padDetectChord([60, 62, 66, 69]);
+      expect(results.some(r => r.name === 'D / C')).toBe(true);
+    });`;
+theoryTest = replaceOnce(theoryTest, oldPedal, newPedal, 'retain non-functional pedal readings');
 
 const regression = `import { describe, it, expect } from 'vitest';
 
@@ -288,7 +350,7 @@ describe('v1.7 detection transparency', () => {
     }
   }
 
-  it('keeps a played b9 visible on a C sixth-family candidate', () => {
+  it('keeps a played b9 visible on the C sixth-family candidate', () => {
     const notes = [60, 61, 64, 69, 74]; // C Db E A D
     const candidates = padDetectChord(notes);
     const sixth = candidates.find(candidate =>
@@ -297,6 +359,7 @@ describe('v1.7 detection transparency', () => {
     expect(sixth).toBeTruthy();
     expect(sixth.tensionLabels).toContain('b9');
     expect(sixth.observedExtraLabels).toContain('b9');
+    expect(sixth.name).toContain('(omit5)');
     expectExactObservation(notes, candidates);
   });
 
