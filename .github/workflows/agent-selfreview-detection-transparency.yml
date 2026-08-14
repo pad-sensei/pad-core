@@ -20,24 +20,27 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Print dominant-over-shell candidate ranking
+      - name: Print uncapped dominant-over-shell candidates
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('theory.js')
+          s = p.read_text()
+          needle = '  return finalized.slice(0, 8);'
+          if needle not in s:
+              raise SystemExit('candidate cap not found')
+          p.write_text(s.replace(needle, '  return finalized.slice(0, 50);', 1))
+          PY
           cat > tests/_selfreview-detection-transparency.test.js <<'EOF'
           import { it, expect } from 'vitest';
 
-          it('prints dominant slash candidates over bass shell', () => {
-            const fixtures = [
-              [48, 52, 55, 58, 59, 62, 65], // C E G Bb B D F
-              [48, 52, 58, 59, 62, 65],     // C E Bb B D F (rootless G7 upper structure)
-              [48, 52, 58, 55, 59, 62, 65],
-            ];
-            for (const notes of fixtures) {
-              const candidates = padDetectChord(notes);
-              console.log('FIXTURE', notes.join(','));
-              console.log(candidates.map(c => `${c.score}: ${c.name} [root=${c.rootPC}]`).join('\n'));
-            }
-            expect(true).toBe(true);
+          it('prints uncapped dominant slash candidates over bass shell', () => {
+            const notes = [48, 52, 55, 58, 59, 62, 65]; // C E G Bb B D F
+            const candidates = padDetectChord(notes);
+            console.log(candidates.map((c, i) => `${i + 1}. ${c.score}: ${c.name} [root=${c.rootPC}, quality=${c.quality}]`).join('\n'));
+            const matches = candidates.filter(c => c.rootPC === 7 && c.quality === '7' && c.name.includes(' / C'));
+            console.log('G7/C MATCHES', JSON.stringify(matches));
+            expect(matches.length).toBeGreaterThan(0);
           });
           EOF
           npx vitest run tests/_selfreview-detection-transparency.test.js --reporter=verbose
-          rm tests/_selfreview-detection-transparency.test.js
