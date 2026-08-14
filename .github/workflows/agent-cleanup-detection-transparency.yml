@@ -1,0 +1,38 @@
+name: Agent detection transparency cleanup
+
+on:
+  push:
+    branches:
+      - agent/v17-detection-transparency
+    paths:
+      - .github/workflows/agent-cleanup-detection-transparency.yml
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Re-run committed implementation suite
+        run: npm test
+      - name: Remove temporary delivery scaffolding
+        run: |
+          rm -f scripts/apply-detection-transparency.cjs
+          rm -f .github/workflows/agent-apply-detection-transparency.yml
+          rm -f .github/workflows/agent-apply-detection-transparency-final.yml
+          rm -f .github/workflows/agent-cleanup-detection-transparency.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "chore: remove detection delivery scaffolding"
+          git push origin HEAD:agent/v17-detection-transparency
