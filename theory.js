@@ -1936,12 +1936,6 @@ function padHasBassShell(pcs, bassPC) {
   return (intervals[3] || intervals[4]) && (intervals[10] || intervals[11]);
 }
 
-function padRejectMinorSeventhFlat13(chordName, intervals) {
-  return /^m7/.test(chordName || '')
-    && (chordName || '').indexOf('b5') < 0
-    && intervals[8];
-}
-
 function padAugAlteredPenalty(chordName, intervals) {
   if ((chordName || '').indexOf('aug') < 0) return 0;
   var hasDominantSeventh = intervals[10];
@@ -1949,20 +1943,135 @@ function padAugAlteredPenalty(chordName, intervals) {
   return hasDominantSeventh && hasAlteredDominantColor ? 140 : 0;
 }
 
-function padRejectDominantSlashOverBassShell(chordName, rootPC, lowestPC, lowestHasShell) {
-  return lowestHasShell
-    && rootPC !== lowestPC
-    && /^7/.test(chordName || '');
+
+// Detection is descriptive: every returned candidate carries the exact pitch
+// classes that were played. Candidate-local labels may interpret an otherwise
+// unrepresented color (for example b3 over a major-3rd identity as #9), but
+// never delete the competing observed reading.
+function padDetectionObservedLabel(interval, candidatePCS) {
+  var set = {};
+  for (var i = 0; i < (candidatePCS || []).length; i++) {
+    set[((candidatePCS[i] % 12) + 12) % 12] = true;
+  }
+  switch (((interval % 12) + 12) % 12) {
+    case 1: return 'b9';
+    case 2: return '9';
+    case 3: return set[4] ? '#9' : 'b3';
+    case 4: return '3';
+    case 5: return '11';
+    case 6: return set[7] ? '#11' : 'b5';
+    case 7: return '5';
+    case 8: return set[7] ? 'b13' : '#5';
+    case 9: return '13';
+    case 10: return 'b7';
+    case 11: return 'Maj7';
+    default: return null;
+  }
 }
 
-function padIsUnnameableMajorSplitThirdColor(pcs, bassPC) {
-  var intervals = {};
-  for (var i = 0; i < pcs.length; i++) intervals[((pcs[i] - bassPC) + 12) % 12] = true;
-  return !!((intervals[10] && intervals[11])
-    || (intervals[3] && intervals[4] && intervals[11] && !intervals[10]));
+function padDetectionCompoundInterval(label) {
+  var map = {
+    'b9': 13, '9': 14, '#9': 15,
+    '11': 17, '#11': 18,
+    'b13': 20, '13': 21,
+  };
+  return map[label];
 }
 
-function padIsAllowedSlashChordCandidate(qualityName, qualityPcs, upperRootPC, bassPC) {
+function padAppendDetectionObservedLabels(name, labels) {
+  if (!labels || labels.length === 0) return name;
+  var slash = '';
+  var slashIdx = name.indexOf(' / ');
+  if (slashIdx >= 0) {
+    slash = name.slice(slashIdx);
+    name = name.slice(0, slashIdx);
+  }
+  var omit5 = '';
+  if (name.slice(-7) === '(omit5)') {
+    omit5 = '(omit5)';
+    name = name.slice(0, -7);
+  }
+
+  var values = [];
+  var trailing = name.match(/^(.*)\(([^()]*)\)$/);
+  if (trailing) {
+    name = trailing[1];
+    values = trailing[2].split(',').map(function(value) { return value.trim(); }).filter(Boolean);
+  }
+  for (var i = 0; i < labels.length; i++) {
+    if (values.indexOf(labels[i]) < 0) values.push(labels[i]);
+  }
+  if (values.length > 0) name += '(' + values.join(',') + ')';
+  return name + omit5 + slash;
+}
+
+function padDetectionCoverageBonus(candidate, observedPCS, lowestPC) {
+  var observed = {};
+  for (var i = 0; i < observedPCS.length; i++) observed[observedPCS[i]] = true;
+  var chordPCS = candidate.chordPCS || [];
+  var matched = 0;
+  var missing = 0;
+  for (var ci = 0; ci < chordPCS.length; ci++) {
+    var absolutePC = (candidate.rootPC + chordPCS[ci]) % 12;
+    if (observed[absolutePC]) matched++;
+    else missing++;
+  }
+  var bonus = matched * 16 - missing * 12;
+  if (matched >= 4) bonus += 28;
+  if (candidate.rootPC === lowestPC) bonus += 10;
+  return bonus;
+}
+
+function padFinalizeObservedCandidate(candidate, observedPCS, lowestPC) {
+  var exactObserved = observedPCS.slice().sort(function(a, b) { return a - b; });
+  candidate.observedPCS = exactObserved;
+  candidate.observedPitchClasses = exactObserved.slice();
+  candidate.observedBassPC = lowestPC;
+
+  var observedIntervals = exactObserved.map(function(pc) {
+    return ((pc - candidate.rootPC) + 12) % 12;
+  }).sort(function(a, b) { return a - b; });
+  candidate.observedIntervals = observedIntervals;
+
+  var represented = {};
+  var candidatePCS = candidate.chordPCS || [];
+  for (var i = 0; i < candidatePCS.length; i++) {
+    represented[((candidatePCS[i] % 12) + 12) % 12] = true;
+  }
+  if (candidate.name.indexOf(' / ') >= 0 && candidate.rootPC !== lowestPC) {
+    represented[((lowestPC - candidate.rootPC) + 12) % 12] = true;
+  }
+
+  var extraIntervals = [];
+  var extraLabels = [];
+  for (var oi = 0; oi < observedIntervals.length; oi++) {
+    var interval = observedIntervals[oi];
+    if (represented[interval]) continue;
+    extraIntervals.push(interval);
+    var label = padDetectionObservedLabel(interval, candidatePCS);
+    if (label && extraLabels.indexOf(label) < 0) extraLabels.push(label);
+  }
+  candidate.observedExtraIntervals = extraIntervals;
+  candidate.observedExtraLabels = extraLabels.slice();
+  candidate.name = padAppendDetectionObservedLabels(candidate.name, extraLabels);
+
+  if (!candidate.tensionLabels) candidate.tensionLabels = [];
+  if (!candidate.tensionPCS) candidate.tensionPCS = [];
+  if (!candidate.tensionIntervals) candidate.tensionIntervals = [];
+  for (var li = 0; li < extraLabels.length; li++) {
+    var compound = padDetectionCompoundInterval(extraLabels[li]);
+    if (compound === undefined) continue;
+    if (candidate.tensionLabels.indexOf(extraLabels[li]) < 0) candidate.tensionLabels.push(extraLabels[li]);
+    var tensionPC = compound % 12;
+    if (candidate.tensionPCS.indexOf(tensionPC) < 0) candidate.tensionPCS.push(tensionPC);
+    if (candidate.tensionIntervals.indexOf(compound) < 0) candidate.tensionIntervals.push(compound);
+  }
+  candidate.tensionPCS.sort(function(a, b) { return a - b; });
+  candidate.tensionIntervals.sort(function(a, b) { return a - b; });
+  return candidate;
+}
+
+function padIsPreferredSlashChordCandidate(qualityName, qualityPcs, upperRootPC, bassPC) {
   var bassFromUpper = ((bassPC - upperRootPC) + 12) % 12;
   if (qualityPcs.indexOf(bassFromUpper) !== -1) return true;
 
@@ -2006,7 +2115,6 @@ function padDetectChord(midiNotes, spellingKey) {
     if (midiNotes[i] < lowestPC) lowestPC = midiNotes[i];
   }
   lowestPC = lowestPC % 12;
-  if (padIsUnnameableMajorSplitThirdColor(pcs, lowestPC)) return [];
   var candidates = [];
   var seenNames = {};
   var lowestHasShell = padHasBassShell(pcs, lowestPC);
@@ -2061,8 +2169,6 @@ function padDetectChord(midiNotes, spellingKey) {
           if (intervals[chord.pcs[k]]) matched++;
         }
         if (matched === chord.pcs.length) {
-          if (padRejectMinorSeventhFlat13(chord.name, intervals)) continue;
-          if (padRejectDominantSlashOverBassShell(chord.name, rootPC, lowestPC, lowestHasShell)) continue;
           var extra = pcs.length - chord.pcs.length;
           var isRootPosition = rootPC === lowestPC;
           var score = (isRootPosition ? 100 : 0) + chord.pcs.length * 10 - extra
@@ -2087,9 +2193,7 @@ function padDetectChord(midiNotes, spellingKey) {
             if (intervals[omit5pcs[k]]) matched++;
           }
           if (matched === omit5pcs.length) {
-            if (padRejectMinorSeventhFlat13(chord.name, intervals)) continue;
-            if (padRejectDominantSlashOverBassShell(chord.name, rootPC, lowestPC, lowestHasShell)) continue;
-            var extra = pcs.length - omit5pcs.length;
+                var extra = pcs.length - omit5pcs.length;
             var isRootPosition = rootPC === lowestPC;
             var rootBonus = (isRootPosition && extra === 0) ? 100 : 0;
             var extraPenalty = extra > 0 ? extra * 35 : 0;
@@ -2097,8 +2201,7 @@ function padDetectChord(midiNotes, spellingKey) {
               + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals);
             var rootName = padPreferredRootNoteName(rootPC, spellingKey);
             var bass = lowestPC !== rootPC ? ' / ' + padChordIntervalNoteName(rootPC, lowestPC) : '';
-            var hasShell = (intervals[3] || intervals[4]) && (intervals[10] || intervals[11]);
-            var omitLabel = (chord.pcs.length >= 5 || hasShell) ? '' : '(omit5)';
+            var omitLabel = '(omit5)';
             var name = rootName + chord.name + omitLabel + bass;
             if (!seenNames[name]) padPushOrBumpCandidate(name, rootPC, score, padDetectDetails(chord));
           }
@@ -2127,17 +2230,14 @@ function padDetectChord(midiNotes, spellingKey) {
             if (triadIntervals[triad.pcs[k]]) matched++;
           }
           if (matched === triad.pcs.length) {
-            if (!padIsAllowedSlashChordCandidate(triad.name, triad.pcs, triadRoot, lowestPC)) continue;
+            var slashPreferencePenalty = padIsPreferredSlashChordCandidate(triad.name, triad.pcs, triadRoot, lowestPC) ? 0 : 80;
             var triadName = padPreferredRootNoteName(triadRoot, spellingKey) + (triad.name === 'Maj' ? '' : triad.name);
             var bassName = padChordIntervalNoteName(triadRoot, lowestPC);
             var name = triadName + ' / ' + bassName;
             var isTriadRoot = triadRoot === lowestPC;
             var isSlashInversion = triad.pcs.indexOf(((lowestPC - triadRoot) + 12) % 12) !== -1;
-            var isB7OverBassHybrid = ((triadRoot - lowestPC + 12) % 12) === 10;
-            if (!(lowestHasShell && isB7OverBassHybrid)) {
-              var score = isTriadRoot ? 125 : (!isSlashInversion ? 144 : 25);
-              padPushOrBumpCandidate(name, triadRoot, score, padSimpleDetectDetails(triad.name, triad.pcs));
-            }
+            var score = (isTriadRoot ? 125 : (!isSlashInversion ? 144 : 25)) - slashPreferencePenalty;
+            padPushOrBumpCandidate(name, triadRoot, score, padSimpleDetectDetails(triad.name, triad.pcs));
           }
         }
       }
@@ -2147,7 +2247,7 @@ function padDetectChord(midiNotes, spellingKey) {
   // Some b7-over-bass upper-structure triads (especially minor triads like Fm/G)
   // can be swallowed by richer exact matches. Keep the hybrid spelling visible
   // because players commonly think and write these as slash chords.
-  if (pcs.length >= 4 && !lowestHasShell) {
+  if (pcs.length >= 4) {
     var hybridRoot = (lowestPC + 10) % 12;
     var hybridUpperSet = {};
     for (var hi = 0; hi < pcs.length; hi++) {
@@ -2176,7 +2276,6 @@ function padDetectChord(midiNotes, spellingKey) {
     bassIntervalsForHybrid[((pcs[bhi] - lowestPC) + 12) % 12] = true;
   }
   function ensureB7HybridFromBass(suffix, thirdFromBass) {
-    if (lowestHasShell) return;
     if (!bassIntervalsForHybrid[10] || !bassIntervalsForHybrid[5] || !bassIntervalsForHybrid[thirdFromBass]) return;
     var rootPC3 = (lowestPC + 10) % 12;
     var name3 = padPreferredRootNoteName(rootPC3, spellingKey) + suffix + ' / ' + padChordIntervalNoteName(rootPC3, lowestPC);
@@ -2209,14 +2308,13 @@ function padDetectChord(midiNotes, spellingKey) {
             if (tetIntervals[tet.pcs[k]]) matched++;
           }
           if (matched === tet.pcs.length) {
-            if (!padIsAllowedSlashChordCandidate(tet.name, tet.pcs, tetRoot, lowestPC)) continue;
+            var slashPreferencePenalty = padIsPreferredSlashChordCandidate(tet.name, tet.pcs, tetRoot, lowestPC) ? 0 : 80;
             var tetName = padPreferredRootNoteName(tetRoot, spellingKey) + tet.name;
             var bassName = padChordIntervalNoteName(tetRoot, lowestPC);
             if (tetRoot === lowestPC) continue;
-            if (lowestHasShell && tet.name === '7') continue;
             var name = tetName + ' / ' + bassName;
             var isSlashInversion = tet.pcs.indexOf(((lowestPC - tetRoot) + 12) % 12) !== -1;
-            var score = isSlashInversion ? 30 + tet.pcs.length * 5 : 144;
+            var score = (isSlashInversion ? 30 + tet.pcs.length * 5 : 144) - slashPreferencePenalty;
             padPushOrBumpCandidate(name, tetRoot, score, padSimpleDetectDetails(tet.name, tet.pcs));
           }
         }
@@ -2228,22 +2326,36 @@ function padDetectChord(midiNotes, spellingKey) {
   // Do not rewrite only display names here: that would desynchronize name,
   // quality, and exact tension intervals while also creating duplicates.
 
+  for (var ri = 0; ri < candidates.length; ri++) {
+    candidates[ri].score += padDetectionCoverageBonus(candidates[ri], pcs, lowestPC);
+  }
   candidates.sort(function(a, b) { return b.score - a.score; });
   function pinB7HybridNearTop(suffix, thirdFromBass) {
-    if (lowestHasShell) return;
     var bassIntervals = {};
     for (var pi = 0; pi < pcs.length; pi++) bassIntervals[((pcs[pi] - lowestPC) + 12) % 12] = true;
     if (!bassIntervals[10] || !bassIntervals[5] || !bassIntervals[thirdFromBass]) return;
     var root = (lowestPC + 10) % 12;
     var pinnedName = padPreferredRootNoteName(root, spellingKey) + suffix + ' / ' + padChordIntervalNoteName(root, lowestPC);
     var existingIdx = candidates.findIndex(function(c) { return c.name === pinnedName; });
-    var pinned = existingIdx >= 0 ? candidates.splice(existingIdx, 1)[0] : { name: pinnedName, rootPC: root, score: 144 };
+    var pinned = existingIdx >= 0 ? candidates.splice(existingIdx, 1)[0] : Object.assign(
+      { name: pinnedName, rootPC: root, score: 144 },
+      padSimpleDetectDetails(suffix || 'Maj', [0, thirdFromBass === 2 ? 4 : 3, 7])
+    );
     pinned.score = Math.max(pinned.score || 0, 144);
     candidates.splice(Math.min(1, candidates.length), 0, pinned);
   }
   pinB7HybridNearTop('', 2);
   pinB7HybridNearTop('m', 1);
-  return candidates.slice(0, 8);
+  var finalized = [];
+  var seenFinal = {};
+  for (var oi = 0; oi < candidates.length; oi++) {
+    var candidate = padFinalizeObservedCandidate(candidates[oi], pcs, lowestPC);
+    var finalKey = candidate.rootPC + '|' + candidate.name;
+    if (seenFinal[finalKey]) continue;
+    seenFinal[finalKey] = true;
+    finalized.push(candidate);
+  }
+  return finalized.slice(0, 8);
 }
 
 // ======== STOCK VOICING MATCHING ========

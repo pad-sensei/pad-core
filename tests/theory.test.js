@@ -1179,11 +1179,16 @@ describe('padDetectChord', () => {
       expect(results[0].name).toBe('C7(b9,#9,b13)');
       expect(results[0].name).not.toBe('Caug');
     });
-    it('does not force a chord name onto major seventh split-third colors', () => {
-      expect(padDetectChord([60, 63, 64, 69, 71])).toEqual([]);
+    it('keeps split-third colors detectable with candidate-local #9 interpretation', () => {
+      const results = padDetectChord([60, 63, 64, 69, 71]);
+      expect(results.length).toBeGreaterThan(0);
+      expect(results.some(r => r.rootPC === 0 && r.name.includes('#9'))).toBe(true);
     });
-    it('does not force a chord name when flat seventh and major seventh coexist', () => {
-      expect(padDetectChord([60, 64, 67, 70, 71])).toEqual([]);
+    it('keeps simultaneous flat seventh and major seventh detectable', () => {
+      const results = padDetectChord([60, 64, 67, 70, 71]);
+      expect(results.length).toBeGreaterThan(0);
+      expect(results.some(r => r.name === 'C7(Maj7)')).toBe(true);
+      expect(results.some(r => r.name === 'CMaj7(b7)')).toBe(true);
     });
   });
 
@@ -1194,10 +1199,10 @@ describe('padDetectChord', () => {
     it('G,C,E [67,72,76] \u2192 CMaj / G', () => {
       expect(hasMatch(padDetectChord([67, 72, 76]), 'CMaj / G')).toBe(true);
     });
-    it('B,G,A,D is Gadd9 / B, not Bm7(b13)', () => {
+    it('B,G,A,D keeps Gadd9 / B first while retaining Bm7(b13)', () => {
       const results = padDetectChord([59, 67, 69, 74]);
       expect(results[0].name).toBe('Gadd9 / B');
-      expect(results.some(r => r.name.indexOf('Bm7(b13)') >= 0)).toBe(false);
+      expect(results.some(r => r.name.startsWith('Bm7(b13)'))).toBe(true);
     });
     it('detects add chords beyond add9 on major and minor triads', () => {
       expect(padDetectChord([60, 64, 67, 77])[0].name).toBe('Cadd11');
@@ -1222,9 +1227,9 @@ describe('padDetectChord', () => {
       expect(hasMatch(condim, 'Abdim7 / G')).toBe(true);
       expect(hasMatch(tritone, 'Db / G')).toBe(true);
     });
-    it('does not list non-functional pedal triads as slash candidates', () => {
+    it('retains non-functional pedal triads as lower-ranked slash candidates', () => {
       const results = padDetectChord([60, 62, 66, 69]);
-      expect(results.some(r => r.name === 'D / C')).toBe(false);
+      expect(results.some(r => r.name === 'D / C')).toBe(true);
     });
   });
 
