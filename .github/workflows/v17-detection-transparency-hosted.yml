@@ -1,0 +1,66 @@
+name: v1.7 detection transparency hosted apply
+
+on:
+  push:
+    branches:
+      - tuner/v17-detection-transparency
+    paths:
+      - .tuner/detection-transparency-hosted-trigger.txt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v17-detection-transparency-hosted-apply
+  cancel-in-progress: true
+
+jobs:
+  apply-test-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+        with:
+          ref: tuner/v17-detection-transparency
+          path: harness
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout product branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/v17-detection-transparency
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply transparent observed-detection ruling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 harness/.tuner/run_detection_transparency_patch.py candidate
+          git -C candidate diff --check
+
+      - name: Install and test
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npx vitest run tests/v17-detection-transparency.test.js tests/v17-explicit-pitch.test.js tests/observed-structure.test.js
+          npm test
+
+      - name: Commit and push verified product changes
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name TUNER
+          git config user.email tuner@pad-sensei.local
+          git add theory.js tests/theory.test.js tests/v17-detection-transparency.test.js
+          git commit -m 'fix(theory): preserve every observed pitch in detection'
+          git push origin HEAD:agent/v17-detection-transparency
+          echo "verified_head=$(git rev-parse HEAD)"
+          echo "verified_tree=$(git rev-parse HEAD^{tree})"
