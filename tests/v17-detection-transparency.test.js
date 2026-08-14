@@ -57,4 +57,16 @@ describe('v1.7 detection transparency', () => {
     expect(candidates.some(candidate => candidate.name === 'D / C')).toBe(true);
     expectExactObservation(notes, candidates);
   });
+
+  it('retains the strongest dominant slash reading over an observed bass shell', () => {
+    const notes = [48, 52, 55, 58, 59, 62, 65]; // C E G Bb B D F
+    const candidates = padDetectChord(notes);
+    const gDominantOverC = candidates.find(candidate =>
+      candidate.rootPC === 7 && candidate.quality === '7' &&
+      candidate.name.startsWith('G7') && candidate.name.includes(' / C')
+    );
+    expect(gDominantOverC).toBeTruthy();
+    expect(gDominantOverC.observedPCS).toEqual([0, 2, 4, 5, 7, 10, 11]);
+    expect(candidates.length).toBeLessThanOrEqual(8);
+  });
 });

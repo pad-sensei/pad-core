@@ -2005,6 +2005,30 @@ function padAppendDetectionObservedLabels(name, labels) {
   return name + omit5 + slash;
 }
 
+function padDetectionSemanticNameKey(name) {
+  // Candidate generation can reach the same semantic label through different
+  // database paths whose parenthetical tension order differs. Normalize only
+  // the dedup key; keep the preferred display spelling untouched.
+  var slash = '';
+  var slashIdx = name.indexOf(' / ');
+  if (slashIdx >= 0) {
+    slash = name.slice(slashIdx);
+    name = name.slice(0, slashIdx);
+  }
+  var omit5 = '';
+  if (name.slice(-7) === '(omit5)') {
+    omit5 = '(omit5)';
+    name = name.slice(0, -7);
+  }
+  var trailing = name.match(/^(.*)\(([^()]*)\)$/);
+  if (trailing) {
+    var values = trailing[2].split(',').map(function(value) { return value.trim(); }).filter(Boolean);
+    values.sort();
+    name = trailing[1] + '(' + values.join(',') + ')';
+  }
+  return name + omit5 + slash;
+}
+
 function padDetectionCoverageBonus(candidate, observedPCS, lowestPC) {
   var observed = {};
   for (var i = 0; i < observedPCS.length; i++) observed[observedPCS[i]] = true;
@@ -2193,7 +2217,7 @@ function padDetectChord(midiNotes, spellingKey) {
             if (intervals[omit5pcs[k]]) matched++;
           }
           if (matched === omit5pcs.length) {
-                var extra = pcs.length - omit5pcs.length;
+            var extra = pcs.length - omit5pcs.length;
             var isRootPosition = rootPC === lowestPC;
             var rootBonus = (isRootPosition && extra === 0) ? 100 : 0;
             var extraPenalty = extra > 0 ? extra * 35 : 0;
@@ -2350,7 +2374,7 @@ function padDetectChord(midiNotes, spellingKey) {
   var seenFinal = {};
   for (var oi = 0; oi < candidates.length; oi++) {
     var candidate = padFinalizeObservedCandidate(candidates[oi], pcs, lowestPC);
-    var finalKey = candidate.rootPC + '|' + candidate.name;
+    var finalKey = candidate.rootPC + '|' + padDetectionSemanticNameKey(candidate.name);
     if (seenFinal[finalKey]) continue;
     seenFinal[finalKey] = true;
     finalized.push(candidate);
