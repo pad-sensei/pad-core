@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 harness/.tuner/patch_detection_transparency.py candidate
+          python3 harness/.tuner/run_detection_transparency_patch.py candidate
           git -C candidate diff --check
           git -C candidate status --short
 
