@@ -11,36 +11,99 @@ permissions:
   contents: write
 
 jobs:
-  diagnose:
+  validate-fix:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Print uncapped dominant-over-shell candidates
+      - name: Apply reviewed semantic dedup fix
         run: |
           python - <<'PY'
           from pathlib import Path
-          p = Path('theory.js')
-          s = p.read_text()
-          needle = '  return finalized.slice(0, 8);'
-          if needle not in s:
-              raise SystemExit('candidate cap not found')
-          p.write_text(s.replace(needle, '  return finalized.slice(0, 50);', 1))
-          PY
-          cat > tests/_selfreview-detection-transparency.test.js <<'EOF'
-          import { it, expect } from 'vitest';
 
-          it('prints uncapped dominant slash candidates over bass shell', () => {
-            const notes = [48, 52, 55, 58, 59, 62, 65]; // C E G Bb B D F
-            const candidates = padDetectChord(notes);
-            console.log(candidates.map((c, i) => `${i + 1}. ${c.score}: ${c.name} [root=${c.rootPC}, quality=${c.quality}]`).join('\n'));
-            const matches = candidates.filter(c => c.rootPC === 7 && c.quality === '7' && c.name.includes(' / C'));
-            console.log('G7/C MATCHES', JSON.stringify(matches));
-            expect(matches.length).toBeGreaterThan(0);
-          });
-          EOF
-          npx vitest run tests/_selfreview-detection-transparency.test.js --reporter=verbose
+          theory_path = Path('theory.js')
+          theory = theory_path.read_text()
+
+          old_indent = "          if (matched === omit5pcs.length) {\n                var extra = pcs.length - omit5pcs.length;"
+          new_indent = "          if (matched === omit5pcs.length) {\n            var extra = pcs.length - omit5pcs.length;"
+          if old_indent not in theory:
+              raise SystemExit('reviewed indentation target not found')
+          theory = theory.replace(old_indent, new_indent, 1)
+
+          anchor = "function padDetectionCoverageBonus(candidate, observedPCS, lowestPC) {"
+          helper = r'''function padDetectionSemanticNameKey(name) {
+            // Candidate generation can reach the same semantic label through different
+            // database paths whose parenthetical tension order differs. Normalize only
+            // the dedup key; keep the preferred display spelling untouched.
+            var slash = '';
+            var slashIdx = name.indexOf(' / ');
+            if (slashIdx >= 0) {
+              slash = name.slice(slashIdx);
+              name = name.slice(0, slashIdx);
+            }
+            var omit5 = '';
+            if (name.slice(-7) === '(omit5)') {
+              omit5 = '(omit5)';
+              name = name.slice(0, -7);
+            }
+            var trailing = name.match(/^(.*)\(([^()]*)\)$/);
+            if (trailing) {
+              var values = trailing[2].split(',').map(function(value) { return value.trim(); }).filter(Boolean);
+              values.sort();
+              name = trailing[1] + '(' + values.join(',') + ')';
+            }
+            return name + omit5 + slash;
+          }
+
+          '''
+          if anchor not in theory:
+              raise SystemExit('semantic-key insertion anchor not found')
+          theory = theory.replace(anchor, helper + anchor, 1)
+
+          old_key = "    var finalKey = candidate.rootPC + '|' + candidate.name;"
+          new_key = "    var finalKey = candidate.rootPC + '|' + padDetectionSemanticNameKey(candidate.name);"
+          if old_key not in theory:
+              raise SystemExit('final dedup key target not found')
+          theory = theory.replace(old_key, new_key, 1)
+          theory_path.write_text(theory)
+
+          test_path = Path('tests/v17-detection-transparency.test.js')
+          tests = test_path.read_text()
+          close = "});\n"
+          if not tests.endswith(close):
+              raise SystemExit('regression test file close not found')
+          regression = r'''
+            it('retains the strongest dominant slash reading over an observed bass shell', () => {
+              const notes = [48, 52, 55, 58, 59, 62, 65]; // C E G Bb B D F
+              const candidates = padDetectChord(notes);
+              const gDominantOverC = candidates.find(candidate =>
+                candidate.rootPC === 7 && candidate.quality === '7' &&
+                candidate.name.startsWith('G7') && candidate.name.includes(' / C')
+              );
+              expect(gDominantOverC).toBeTruthy();
+              expect(gDominantOverC.observedPCS).toEqual([0, 2, 4, 5, 7, 10, 11]);
+              expect(candidates.length).toBeLessThanOrEqual(8);
+            });
+          '''
+          tests = tests[:-len(close)] + regression + close
+          test_path.write_text(tests)
+          PY
+      - name: Run transparency regressions
+        run: npx vitest run tests/v17-detection-transparency.test.js
+      - name: Run full pad-core suite
+        run: npm test
+      - name: Commit validated review fix and remove workflow
+        run: |
+          rm -f .github/workflows/agent-selfreview-detection-transparency.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(theory): deduplicate transparent candidates semantically"
+          git push origin HEAD:agent/v17-detection-transparency
