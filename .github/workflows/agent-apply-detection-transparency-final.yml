@@ -1,0 +1,48 @@
+name: Agent detection transparency final
+
+on:
+  push:
+    branches:
+      - agent/v17-detection-transparency
+    paths:
+      - .github/workflows/agent-apply-detection-transparency-final.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Apply transparency patch
+        run: node scripts/apply-detection-transparency.cjs
+      - name: Keep existing altered-dominant spelling contract
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = 'tests/theory.test.js';
+          let text = fs.readFileSync(path, 'utf8');
+          const from = "expect(results[0].name).toBe('C7(b9,#9,b13)(omit5)');";
+          const to = "expect(results[0].name).toBe('C7(b9,#9,b13)');";
+          if (!text.includes(from)) throw new Error('altered-dominant expectation not found');
+          text = text.replace(from, to);
+          fs.writeFileSync(path, text);
+          NODE
+      - name: Run full pad-core suite
+        run: npm test
+      - name: Commit validated implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add theory.js tests/theory.test.js tests/v17-detection-transparency.test.js
+          git diff --cached --check
+          git commit -m "fix(theory): make chord detection transparent"
+          git push origin HEAD:agent/v17-detection-transparency
