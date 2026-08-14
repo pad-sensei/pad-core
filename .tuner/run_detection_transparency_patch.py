@@ -70,6 +70,25 @@ def postprocess_detector(root: Path) -> None:
     if count != 2:
         raise SystemExit(f"generated candidate guard mismatch: {count}")
     text = text.replace(guarded, "padPushOrBumpCandidate(name, rootPC, score, padDetectDetails(chord));")
+
+    old_omit_score = """            var extraPenalty = extra > 0 ? extra * 35 : 0;
+            var score = rootBonus + chord.pcs.length * 10 - extra - 5 - extraPenalty
+              + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals)
+              - padMinorSeventhFlat13Penalty(chord.name, intervals)
+              - padDominantSlashOverBassShellPenalty(chord.name, rootPC, lowestPC, lowestHasShell);
+"""
+    new_omit_score = """            var extraPenalty = extra > 0 ? extra * 35 : 0;
+            // Formerly hidden add/m6-derived omit readings remain visible, but an
+            // exact dim/aug/triad identity must rank ahead of the derived spelling.
+            var derivedOmitPenalty = (/^m?add/.test(chord.name || '') || chord.name === 'm6(11)') ? 30 : 0;
+            var score = rootBonus + chord.pcs.length * 10 - extra - 5 - extraPenalty - derivedOmitPenalty
+              + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals)
+              - padMinorSeventhFlat13Penalty(chord.name, intervals)
+              - padDominantSlashOverBassShellPenalty(chord.name, rootPC, lowestPC, lowestHasShell);
+"""
+    if text.count(old_omit_score) != 1:
+        raise SystemExit(f"omit ranking anchor mismatch: {text.count(old_omit_score)}")
+    text = text.replace(old_omit_score, new_omit_score, 1)
     path.write_text(text)
 
 
