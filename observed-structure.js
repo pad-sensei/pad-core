@@ -95,8 +95,7 @@ function padObservedSelectShell(notes, rootPC, quality) {
   if (!rule.required.every(function(iv) { return byInterval[iv] && byInterval[iv].length; })) return null;
 
   // Own the lowest actually-held occurrence of each characteristic shell degree.
-  // This leaves duplicated upper degrees available to the UST layer rather than
-  // collapsing source identity into a pitch-class Set.
+  // Duplicated upper degrees stay available to the UST layer as distinct sources.
   var owned = rule.required.map(function(iv) { return byInterval[iv][0]; });
   var maxRequiredMidi = Math.max.apply(null, owned.map(function(n) { return n.midi; }));
   var roots = (byInterval[0] || []).slice().sort(function(a, b) { return a.midi - b.midi || a._sourceIndex - b._sourceIndex; });
@@ -111,14 +110,15 @@ function padObservedSelectShell(notes, rootPC, quality) {
 
 function padObservedGridPairIsConsistent(a, b) {
   if (a.row === null || a.col === null || b.row === null || b.col === null) return false;
-  // Fourths-grid invariant: mapped MIDI delta must agree with 5-semitone rows + columns.
   return (b.mappedMidi - a.mappedMidi) === ((b.row - a.row) * 5 + (b.col - a.col));
 }
 
 function padObservedQuartalGeometryIsCompact(stack, positionLevel) {
   if (positionLevel === 'none') return true;
-  for (var i = 1; i < stack.length; i++) {
-    if (!padObservedGridPairIsConsistent(stack[i - 1], stack[i])) return false;
+  for (var i = 0; i < stack.length; i++) {
+    for (var j = i + 1; j < stack.length; j++) {
+      if (!padObservedGridPairIsConsistent(stack[i], stack[j])) return false;
+    }
   }
   var rows = stack.map(function(n) { return n.row; });
   var cols = stack.map(function(n) { return n.col; });
@@ -127,7 +127,26 @@ function padObservedQuartalGeometryIsCompact(stack, positionLevel) {
   return rowSpan <= 2 && colSpan <= 2;
 }
 
-function padObservedFindQuartalStack(notes, positionLevel) {
+function padObservedQuartalGeneratorPC(stack) {
+  var pcs = new Set(stack.map(function(note) { return note.pc; }));
+  if (pcs.size !== 3) return null;
+  var values = Array.from(pcs);
+  for (var i = 0; i < values.length; i++) {
+    var base = values[i];
+    if (pcs.has(padObservedMod12(base + 5)) && pcs.has(padObservedMod12(base + 10))) return base;
+  }
+  return null;
+}
+
+function padObservedOrderQuartalStack(stack, generatorPC) {
+  var order = [generatorPC, padObservedMod12(generatorPC + 5), padObservedMod12(generatorPC + 10)];
+  return order.map(function(pc) {
+    return stack.filter(function(note) { return note.pc === pc; })
+      .sort(function(a, b) { return a.midi - b.midi || a._sourceIndex - b._sourceIndex; })[0];
+  });
+}
+
+function padObservedFindRegisterQuartalStack(notes) {
   var ordered = notes.slice().sort(function(a, b) { return a.midi - b.midi || a._sourceIndex - b._sourceIndex; });
   var candidates = [];
   for (var i = 0; i < ordered.length; i++) {
@@ -135,21 +154,54 @@ function padObservedFindQuartalStack(notes, positionLevel) {
       if (ordered[j].midi - ordered[i].midi !== 5) continue;
       for (var k = j + 1; k < ordered.length; k++) {
         if (ordered[k].midi - ordered[j].midi !== 5) continue;
-        var stack = [ordered[i], ordered[j], ordered[k]];
-        if (!padObservedQuartalGeometryIsCompact(stack, positionLevel)) continue;
-        candidates.push(stack);
+        candidates.push({ stack: [ordered[i], ordered[j], ordered[k]], generatorPC: ordered[i].pc });
       }
     }
   }
   if (!candidates.length) return null;
-  // After shell partition, prefer the actual uppermost compact stack. Never pull an
-  // owned shell source back in merely because it would make another dictionary label.
   candidates.sort(function(a, b) {
-    var aMin = a[0].midi, bMin = b[0].midi;
+    var aMin = Math.min.apply(null, a.stack.map(function(n) { return n.midi; }));
+    var bMin = Math.min.apply(null, b.stack.map(function(n) { return n.midi; }));
     if (aMin !== bMin) return bMin - aMin;
-    return a[0]._sourceIndex - b[0]._sourceIndex;
+    return a.stack[0]._sourceIndex - b.stack[0]._sourceIndex;
   });
   return candidates[0];
+}
+
+function padObservedFindPhysicalQuartalStack(notes, positionLevel) {
+  var candidates = [];
+  for (var i = 0; i < notes.length; i++) {
+    for (var j = i + 1; j < notes.length; j++) {
+      for (var k = j + 1; k < notes.length; k++) {
+        var stack = [notes[i], notes[j], notes[k]];
+        var generatorPC = padObservedQuartalGeneratorPC(stack);
+        if (generatorPC === null || !padObservedQuartalGeometryIsCompact(stack, positionLevel)) continue;
+        candidates.push({
+          stack: padObservedOrderQuartalStack(stack, generatorPC),
+          generatorPC: generatorPC,
+          minMidi: Math.min(stack[0].midi, stack[1].midi, stack[2].midi),
+          rowSpan: Math.max(stack[0].row, stack[1].row, stack[2].row) - Math.min(stack[0].row, stack[1].row, stack[2].row),
+          colSpan: Math.max(stack[0].col, stack[1].col, stack[2].col) - Math.min(stack[0].col, stack[1].col, stack[2].col),
+        });
+      }
+    }
+  }
+  if (!candidates.length) return null;
+  candidates.sort(function(a, b) {
+    // Use the highest compact physical group. For equal register, prefer the
+    // tighter geometry and then deterministic source order.
+    if (a.minMidi !== b.minMidi) return b.minMidi - a.minMidi;
+    var aSpan = a.rowSpan + a.colSpan;
+    var bSpan = b.rowSpan + b.colSpan;
+    if (aSpan !== bSpan) return aSpan - bSpan;
+    return a.stack[0]._sourceIndex - b.stack[0]._sourceIndex;
+  });
+  return candidates[0];
+}
+
+function padObservedFindQuartalStack(notes, positionLevel) {
+  if (positionLevel === 'none') return padObservedFindRegisterQuartalStack(notes);
+  return padObservedFindPhysicalQuartalStack(notes, positionLevel);
 }
 
 function padAnalyzeObservedShellUst(input) {
@@ -181,9 +233,7 @@ function padAnalyzeObservedShellUst(input) {
   var upper = notes.filter(function(n) { return !shellSelection.sourceIndexes.has(n._sourceIndex); });
   if (upper.length < 3) return result;
 
-  // If any position-aware evidence was supplied, do not silently downgrade a failed
-  // physical shape to pitch-class/register inference. Generic MIDI is the explicit
-  // `none` path and retains a register-based fallback.
+  // Mixed physical/generic evidence must not silently downgrade to register inference.
   var upperPositionLevel = padObservedPositionLevel(upper);
   var hasAnyPositionEvidence = upper.some(function(n) { return n.positionConfidence !== 'none'; });
   if (hasAnyPositionEvidence && upperPositionLevel === 'none') return result;
@@ -192,10 +242,10 @@ function padAnalyzeObservedShellUst(input) {
   if (!quartal) return result;
   result.ust = {
     kind: 'quartal',
-    name: padObservedQuartalName(quartal[0].pc - rootPC),
+    name: padObservedQuartalName(quartal.generatorPC - rootPC),
     base: chord.name || quality,
-    notes: quartal.map(function(n) { return padObservedOutputNote(n, rootPC, quality); }),
-    degrees: quartal.map(function(n) { return padObservedDegreeName(n.pc - rootPC, quality); }),
+    notes: quartal.stack.map(function(n) { return padObservedOutputNote(n, rootPC, quality); }),
+    degrees: quartal.stack.map(function(n) { return padObservedDegreeName(n.pc - rootPC, quality); }),
     confidence: upperPositionLevel === 'exact' ? 'physical' : (upperPositionLevel === 'reconstructed' ? 'physical' : 'register'),
     positionConfidence: upperPositionLevel,
   };
