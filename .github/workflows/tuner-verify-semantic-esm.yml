@@ -1,0 +1,27 @@
+name: TUNER verify semantic ESM
+
+on:
+  push:
+    branches:
+      - agent/generated-semantic-esm
+    paths:
+      - .github/workflows/tuner-verify-semantic-esm.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: git diff --check
