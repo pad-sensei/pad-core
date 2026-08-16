@@ -5,6 +5,7 @@
   "layer": "theory",
   "sourcePolicy": "adapter-only",
   "excludedLayers": ["render", "audio", "midi", "push", "dom", "application"],
+  "classicSourceLoadOrder": ["data.js", "theory.js", "observed-structure.js", "semantic-api.js"],
   "symbols": [
     {"public":"version","kind":"literal","sourceFile":"semantic-api.js","value":"0","layer":"metadata"},
     {"public":"pitchClass","kind":"function","source":"padPitchClass","sourceFile":"theory.js","layer":"theory"},
