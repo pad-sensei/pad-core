@@ -227,6 +227,7 @@ function padUpdateTensionVisibility(btns, quality, applyTensionFn, opts) {
       var isMinor = quality.pcs.indexOf(3) >= 0;
       var isMaj7E = quality.pcs.indexOf(4) >= 0 && quality.pcs.indexOf(11) >= 0;
       var isDim7 = isMinor && quality.pcs.indexOf(6) >= 0 && quality.pcs.indexOf(9) >= 0 && quality.pcs.indexOf(10) < 0;
+      var dim7AvailablePCS = isDim7 ? new Set(padGetDim7AvailableTensionPCs(quality.pcs)) : null;
       var isMM7 = isMinor && quality.pcs.indexOf(11) >= 0;
       btns.forEach(function(btn) {
         if (!btn._tension || btn.classList.contains('quality-hidden')) return;
@@ -237,6 +238,22 @@ function padUpdateTensionVisibility(btns, quality, applyTensionFn, opts) {
         if (isMaj7E && (m.sharp5 || m.flat5 ||
               (m.add && (m.add.indexOf(1) >= 0 || m.add.indexOf(3) >= 0 || m.add.indexOf(8) >= 0)))) {
           btn.classList.add('quality-hidden'); return;
+        }
+        // dim7 v1.7: available tensions are exactly +M2 above each chord tone.
+        // Chord-tone duplicates are handled as no-ops above; any genuinely added pc
+        // outside that set is not an available dim7 tension and stays out of Builder UI.
+        if (isDim7 && m.add) {
+          // Natural 13 is a separately registered constructed voicing, never an
+          // available dim7 tension button. Compound explicit forms retain their
+          // own register metadata through padApplyTension.
+          if (btn._tension.label === '13') { btn.classList.add('quality-hidden'); return; }
+          var basePcs = new Set(quality.pcs.map(function(pc) { return ((pc % 12) + 12) % 12; }));
+          for (var di = 0; di < m.add.length; di++) {
+            var dpc = ((m.add[di] % 12) + 12) % 12;
+            if (!basePcs.has(dpc) && !dim7AvailablePCS.has(dpc)) {
+              btn.classList.add('quality-hidden'); return;
+            }
+          }
         }
         // dim7: aug (#5) duplicates the b13 pitch and is redundant on a symmetric
         // diminished chord — hide it (b5 is already a chord tone → no-op hidden).

@@ -131,57 +131,61 @@ const BUILDER_QUALITIES = [
 const TENSION_ROWS = [
   // Row 0 — 2026-05-19: sus4 / sus2 を BUILDER_QUALITIES Row 4 (sus 系統) に集約、 Tension 行から削除
   [
-    {label:'aug', mods:{sharp5:true}},
-    {label:'6', mods:{add:[9]}},
-    {label:'9', mods:{add:[2]}},
-    {label:'11', mods:{add:[2,5]}},
-    {label:'13', mods:{add:[9]}},
-    {label:'(9,13)', mods:{add:[2,9]}},
+    {label:'aug', tensionLabels:['aug'], mods:{sharp5:true}},
+    {label:'6', tensionLabels:['6'], mods:{add:[9]}},
+    {label:'9', tensionLabels:['9'], mods:{add:[2]}},
+    // v1.7: explicit/selected 11 means 11 only. Never complete a hidden 9.
+    {label:'11', tensionLabels:['11'], mods:{add:[5]}},
+    // `13` is a constructed explicit register, not a dim7 available tension.
+    {label:'13', tensionLabels:['13'], mods:{add:[9], registerAdd:[9]}},
+    {label:'(9,13)', tensionLabels:['9','13'], mods:{add:[2,9], registerAdd:[9]}},
   ],
   // Row 1
   [
-    {label:'add9', mods:{add:[2]}},
-    {label:'b5', mods:{flat5:true}},
-    {label:'6(9)', mods:{add:[9,2]}},
-    {label:'b9', mods:{add:[1]}},
-    {label:'#11', mods:{add:[6]}},
-    {label:'b13', mods:{add:[8]}},
+    {label:'add9', tensionLabels:['add9'], mods:{add:[2]}},
+    {label:'b5', tensionLabels:['b5'], mods:{flat5:true}},
+    {label:'6(9)', tensionLabels:['6','9'], mods:{add:[9,2]}},
+    {label:'b9', tensionLabels:['b9'], mods:{add:[1]}},
+    {label:'#11', tensionLabels:['#11'], mods:{add:[6]}},
+    {label:'b13', tensionLabels:['b13'], mods:{add:[8]}},
   ],
   // Row 2
   [
-    {label:'aug\n(9)', mods:{add:[2], sharp5:true}},
-    {label:'6(9,#11)', mods:{add:[6,9,2]}},
-    {label:'#9', mods:{add:[3]}},
-    {label:'(9)\n(11)', mods:{add:[5,2]}},
-    {label:'(11)\n(13)', mods:{add:[9,5]}},
+    {label:'aug\n(9)', tensionLabels:['aug','9'], mods:{add:[2], sharp5:true}},
+    {label:'6(9,#11)', tensionLabels:['6','9','#11'], mods:{add:[6,9,2]}},
+    {label:'#9', tensionLabels:['#9'], mods:{add:[3]}},
+    {label:'(9)\n(11)', tensionLabels:['9','11'], mods:{add:[5,2]}},
+    // Preserve an explicit 13 register when its pitch class is already present
+    // (for example dim7's b7), without promoting compatibility pcs to active tones.
+    {label:'(11)\n(13)', tensionLabels:['11','13'], mods:{add:[9,5], registerAdd:[9]}},
   ],
   // Row 3
   [
-    {label:'sus4\n(9)', mods:{replace3:5, add:[2]}},
-    {label:'b5\n(b9)', mods:{add:[1], flat5:true}},
+    {label:'sus4\n(9)', tensionLabels:['sus4','9'], mods:{replace3:5, add:[2]}},
+    {label:'b5\n(b9)', tensionLabels:['b5','b9'], mods:{add:[1], flat5:true}},
     null,
     null,
-    {label:'(b11)\n(b13)', mods:{add:[8,4]}},
+    {label:'(b11)\n(b13)', tensionLabels:['b11','b13'], mods:{add:[8,4]}},
     null,
     null,
     null,
   ],
   // Row 4
   [
-    {label:'sus4\n(b9)', mods:{replace3:5, add:[1]}},
-    {label:'aug\n(b9)', mods:{sharp5:true, add:[1]}},
+    {label:'sus4\n(b9)', tensionLabels:['sus4','b9'], mods:{replace3:5, add:[1]}},
+    {label:'aug\n(b9)', tensionLabels:['aug','b9'], mods:{sharp5:true, add:[1]}},
     null,
-    {label:'(9)\n(#11)', mods:{add:[6,2]}},
-    {label:'(#11)\n(b13)', mods:{add:[8,6]}},
+    {label:'(9)\n(#11)', tensionLabels:['9','#11'], mods:{add:[6,2]}},
+    {label:'(#11)\n(b13)', tensionLabels:['#11','b13'], mods:{add:[8,6]}},
     null,
     null,
     null,
   ],
   // Row 5
   [
-    {label:'(#9)\n(#11)', mods:{add:[3,6]}},
+    {label:'(#9)\n(#11)', tensionLabels:['#9','#11'], mods:{add:[3,6]}},
     null,
-    {label:'(9)\n(#11)\n(13)', mods:{add:[9,2,6]}},
+    {label:'(9)\n(#11)\n(13)', tensionLabels:['9','#11','13'], mods:{add:[9,2,6], registerAdd:[9]}},
     null,
     null,
     null,
@@ -191,10 +195,10 @@ const TENSION_ROWS = [
   // Row 6
   [
     null,
-    {label:'aug\n(#9)', mods:{add:[3], sharp5:true}},
-    {label:'b5\n(#9)', mods:{add:[3], flat5:true}},
-    {label:'(9)\n(b13)', mods:{add:[8,2]}},
-    {label:'(b9)\n(13)', mods:{add:[1,9]}},
+    {label:'aug\n(#9)', tensionLabels:['aug','#9'], mods:{add:[3], sharp5:true}},
+    {label:'b5\n(#9)', tensionLabels:['b5','#9'], mods:{add:[3], flat5:true}},
+    {label:'(9)\n(b13)', tensionLabels:['9','b13'], mods:{add:[8,2]}},
+    {label:'(b9)\n(13)', tensionLabels:['b9','13'], mods:{add:[1,9], registerAdd:[9]}},
     null,
     null,
     null,
@@ -204,8 +208,8 @@ const TENSION_ROWS = [
     null,
     null,
     null,
-    {label:'(b9)\n(b13)', mods:{add:[8,1]}},
-    {label:'(#9)\n(b13)', mods:{add:[3,8]}},
+    {label:'(b9)\n(b13)', tensionLabels:['b9','b13'], mods:{add:[8,1]}},
+    {label:'(#9)\n(b13)', tensionLabels:['#9','b13'], mods:{add:[3,8]}},
     null,
     null,
     null,
@@ -215,7 +219,7 @@ const TENSION_ROWS = [
     null,
     null,
     null,
-    {label:'(b9)\n(#9)\n(b13)', mods:{add:[8,1,3]}},
+    {label:'(b9)\n(#9)\n(b13)', tensionLabels:['b9','#9','b13'], mods:{add:[8,1,3]}},
     null,
     null,
     null,
@@ -226,14 +230,42 @@ const TENSION_ROWS = [
 // ======== DEGREE NAME ↔ SEMITONE ========
 // Complete mapping: chord tones + tensions + enharmonic aliases (superset of TENSION_NAME_TO_PC)
 var DEGREE_TO_SEMITONE = {
-  '1':0, 'b9':1, '9':2, '#9':3, 'b3':3, '3':4, '11':5,
+  '1':0, 'b9':1, '9':2, '#9':3, 'b3':3, '3':4, 'b11':4, '11':5,
   '#11':6, 'b5':6, '5':7, '#5':8, 'b13':8, '13':9, '6':9,
   'b7':10, '7':11, 'bb7':9
 };
 
 // ======== AVAILABLE TENSIONS PER SCALE ========
 const PC_TO_TENSION_NAME = { 1:'b9', 2:'9', 3:'#9', 5:'11', 6:'#11', 8:'b13', 9:'13' };
-const TENSION_NAME_TO_PC = { 'b9':1, '9':2, '#9':3, '11':5, '#11':6, 'b13':8, '13':9 };
+const TENSION_NAME_TO_PC = { 'b9':1, '9':2, '#9':3, 'b11':4, '11':5, '#11':6, 'b13':8, '13':9 };
+
+// dim7's available additions are its four whole-step successors. `13` is
+// deliberately absent: pc9 is the diminished seventh (bb7), not an available
+// natural 13. An explicit upper 13 is preserved separately as a register.
+const PAD_DIM7_TENSION_DEFINITIONS = [
+  { pc:2, label:'9', interval:14 },
+  { pc:5, label:'11', interval:17 },
+  { pc:8, label:'b13', interval:20 },
+  { pc:11, label:'7', interval:23 },
+];
+
+// dim7 v1.7 rule: compatibility is a separate possibility layer. Available pcs are
+// exactly a major second above each actual chord-tone pc. This helper does not add
+// those notes to any observed/constructed active-pitch set.
+function padGetDim7AvailableTensionPCs(chordTonePCS) {
+  var tones = Array.from(new Set((chordTonePCS || []).map(function(pc) {
+    return ((pc % 12) + 12) % 12;
+  })));
+  return Array.from(new Set(tones.map(function(pc) { return (pc + 2) % 12; })))
+    .sort(function(a, b) { return a - b; });
+}
+
+function padGetDim7AvailableTensions(rootPC, chordTonePCS) {
+  var available = new Set(padGetDim7AvailableTensionPCs(chordTonePCS));
+  return PAD_DIM7_TENSION_DEFINITIONS.filter(function(definition) {
+    return available.has((rootPC + definition.pc) % 12);
+  });
+}
 
 const SCALE_AVAIL_TENSIONS = {
   // === Diatonic ===
@@ -279,6 +311,11 @@ var PAD_ROOT_TO_PC = {
   'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11,
 };
 
+// Abstract chord/scale-class shorthands are intentionally not concrete performed
+// pitch sets. A consumer may present them as compatibility concepts, but the concrete
+// parser must not manufacture one arbitrary sounding collection for them.
+var PAD_ABSTRACT_CHORD_SHORTHANDS = new Set(['7alt']);
+
 // Quality string → intervals (semitones from root)
 // Sorted by key length desc for longest-match parsing
 var PAD_QUALITY_INTERVALS = {
@@ -289,6 +326,9 @@ var PAD_QUALITY_INTERVALS = {
   '7(b9,#11)':  [0, 4, 7, 10, 13, 18],
   '7(#9,#11)':  [0, 4, 7, 10, 15, 18],
   '7(9,#11)':   [0, 4, 7, 10, 14, 18],
+  // Builder-visible compound forms whose b11 pitch may duplicate the quality 3rd.
+  '7(b11,b13)': [0, 4, 7, 10, 20],
+  '7sus4(b11,b13)': [0, 5, 7, 10, 16, 20],
   '6(9,#11)':   [0, 4, 7, 9, 14, 18],
   '6.9(#11)':   [0, 4, 7, 9, 14, 18],
   'm6(11)':     [0, 3, 7, 9, 17],
@@ -311,9 +351,9 @@ var PAD_QUALITY_INTERVALS = {
   'm7(13)':     [0, 3, 7, 10, 21],
   'm7(11)':     [0, 3, 7, 10, 17],
   'm7(9)':      [0, 3, 7, 10, 14],
-  // 7 + tension explicit form
-  '7(13)':      [0, 4, 7, 10, 14, 21],
-  '7(11)':      [0, 4, 7, 10, 14, 17],
+  // 7 + explicit tension forms. v1.7: no hidden lower-extension completion.
+  '7(13)':      [0, 4, 7, 10, 21],
+  '7(11)':      [0, 4, 7, 10, 17],
   '7(9)':       [0, 4, 7, 10, 14],
   // Quartal (4th stacking)
   'quartal':    [0, 5, 10, 15],
@@ -329,7 +369,6 @@ var PAD_QUALITY_INTERVALS = {
   'add11':  [0, 4, 7, 17],
   'add9':   [0, 4, 7, 14],
   'aug7':   [0, 4, 8, 10],
-  '7alt':   [0, 4, 6, 10, 13, 15],
   'dim7':   [0, 3, 6, 9],
   'maj9':   [0, 4, 7, 11, 14],
   'maj7':   [0, 4, 7, 11],
@@ -371,8 +410,9 @@ var PAD_QUALITY_INTERVALS = {
   'm9':   [0, 3, 7, 10, 14],
   'm7':   [0, 3, 7, 10],
   'm6':   [0, 3, 7, 9],
-  '13':   [0, 4, 7, 10, 14, 21],
-  '11':   [0, 4, 7, 10, 14, 17],
+  // Bare 11/13 are concrete dominant-7 + explicitly named extension only.
+  '13':   [0, 4, 7, 10, 21],
+  '11':   [0, 4, 7, 10, 17],
   // 1 char
   '9':    [0, 4, 7, 10, 14],
   '7':    [0, 4, 7, 10],
@@ -466,14 +506,19 @@ const PAD_BASS_NAMES  = ['G', 'D', 'A', 'E'];
 
 function padBuildChordDetectDB() {
   var db = [];
+  var DETECT_TENSION_INTERVALS = { b9:13, '9':14, '#9':15, '11':17, '#11':18, b13:20, '13':21 };
   BUILDER_QUALITIES.flat().forEach(function(q) {
     if (!q) return;
-    db.push({ name: q.name || 'Maj', pcs: q.pcs, pcsSet: new Set(q.pcs) });
+    db.push({
+      name: q.name || 'Maj', quality: q.name || 'Maj', pcs: q.pcs, pcsSet: new Set(q.pcs),
+      chordPCS: q.pcs.slice(), chordIntervals: q.pcs.slice(), tensionLabels: [], tensionPCS: [], tensionIntervals: [],
+    });
   });
 
   // sus2 is not a builder quality (it is an inversion of the sus4 a 5th up),
   // but it should still be recognized by chord detection.
-  db.push({ name: 'sus2', pcs: [0, 2, 7], pcsSet: new Set([0, 2, 7]) });
+  db.push({ name: 'sus2', quality: 'sus2', pcs: [0, 2, 7], pcsSet: new Set([0, 2, 7]),
+    chordPCS: [0, 2, 7], chordIntervals: [0, 2, 7], tensionLabels: [], tensionPCS: [], tensionIntervals: [] });
 
   function addGeneratedTensionChords(baseName, basePcs, groups) {
     function search(groupIdx, picked) {
@@ -486,8 +531,14 @@ function padBuildChordDetectDB() {
         });
         db.push({
           name: baseName + '(' + picked.join(',') + ')',
+          quality: baseName,
           pcs: pcs,
-          pcsSet: new Set(pcs)
+          pcsSet: new Set(pcs),
+          chordPCS: pcs.slice().sort(function(a, b) { return a - b; }),
+          chordIntervals: basePcs.concat(picked.map(function(label) { return DETECT_TENSION_INTERVALS[label]; })).sort(function(a, b) { return a - b; }),
+          tensionLabels: picked.slice(),
+          tensionPCS: picked.map(function(label) { return TENSION_NAME_TO_PC[label]; }).sort(function(a, b) { return a - b; }),
+          tensionIntervals: picked.map(function(label) { return DETECT_TENSION_INTERVALS[label]; }).sort(function(a, b) { return a - b; }),
         });
         return;
       }
@@ -523,6 +574,36 @@ function padBuildChordDetectDB() {
     ['11'],
     ['b13']
   ]);
+
+  // dim7 uses the same availability SSOT as Builder visibility. These are
+  // performed additions only; a duplicated MIDI pc never infers explicit 13.
+  (function addGeneratedDim7TensionChords() {
+    var basePcs = [0, 3, 6, 9];
+    var definitions = padGetDim7AvailableTensions(0, basePcs);
+    function search(index, picked) {
+      if (index === definitions.length) {
+        if (picked.length === 0) return;
+        var tensionPCS = picked.map(function(definition) { return definition.pc; });
+        var chordPCS = basePcs.concat(tensionPCS).sort(function(a, b) { return a - b; });
+        var tensionIntervals = picked.map(function(definition) { return definition.interval; });
+        db.push({
+          name: 'dim7(' + picked.map(function(definition) { return definition.label; }).join(',') + ')',
+          quality: 'dim7',
+          tensionLabels: picked.map(function(definition) { return definition.label; }),
+          pcs: chordPCS,
+          pcsSet: new Set(chordPCS),
+          chordPCS: chordPCS,
+          chordIntervals: basePcs.concat(tensionIntervals).sort(function(a, b) { return a - b; }),
+          tensionPCS: tensionPCS,
+          tensionIntervals: tensionIntervals,
+        });
+        return;
+      }
+      search(index + 1, picked);
+      search(index + 1, picked.concat(definitions[index]));
+    }
+    search(0, []);
+  })();
 
   var tensionChords = [
     // Practical jazz omissions
@@ -601,7 +682,12 @@ function padBuildChordDetectDB() {
     { name: 'madd#11', pcs: [0,3,7,6] },
   ];
   tensionChords.forEach(function(c) {
-    db.push({ name: c.name, pcs: c.pcs, pcsSet: new Set(c.pcs) });
+    // These legacy literal entries have no selected-builder provenance. Keep a
+    // complete, non-explicit schema without recovering it from their display name.
+    db.push({ name: c.name, quality: c.name, pcs: c.pcs, pcsSet: new Set(c.pcs),
+      chordPCS: c.pcs.slice().sort(function(a, b) { return a - b; }),
+      chordIntervals: c.pcs.slice().sort(function(a, b) { return a - b; }),
+      tensionLabels: [], tensionPCS: [], tensionIntervals: [] });
   });
   return db;
 }
@@ -1243,7 +1329,9 @@ if (typeof module !== 'undefined') module.exports = {
   SCALES, SCALE_FULL_NAMES, KEY_SPELLINGS,
   BUILDER_QUALITIES, TENSION_ROWS,
   DEGREE_TO_SEMITONE, PC_TO_TENSION_NAME, TENSION_NAME_TO_PC, SCALE_AVAIL_TENSIONS,
-  PAD_ROOT_TO_PC, PAD_QUALITY_INTERVALS, PAD_QUALITY_KEYS, PAD_QUALITY_DISPLAY,
+  padGetDim7AvailableTensionPCs, padGetDim7AvailableTensions, PAD_DIM7_TENSION_DEFINITIONS,
+  PAD_ROOT_TO_PC, PAD_ABSTRACT_CHORD_SHORTHANDS,
+  PAD_QUALITY_INTERVALS, PAD_QUALITY_KEYS, PAD_QUALITY_DISPLAY,
   GRID, GRID_32, SCALE_DEGREE_NAMES,
   PAD_INST_COLORS, PAD_GUITAR_TUNING, PAD_GUITAR_NAMES, PAD_BASS_TUNING, PAD_BASS_NAMES,
   padBuildChordDetectDB, CHORD_DETECT_DB, TRIAD_DETECT_DB, TETRAD_DETECT_DB,
