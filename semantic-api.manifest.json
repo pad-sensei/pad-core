@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "apiVersion": "0",
+  "namespace": "PadSenseiTheory",
+  "layer": "theory",
+  "sourcePolicy": "adapter-only",
+  "excludedLayers": ["render", "audio", "midi", "push", "dom", "application"],
+  "symbols": [
+    {"public":"version","kind":"literal","sourceFile":"semantic-api.js","value":"0","layer":"metadata"},
+    {"public":"pitchClass","kind":"function","source":"padPitchClass","sourceFile":"theory.js","layer":"theory"},
+    {"public":"pcName","kind":"function","source":"padPcName","sourceFile":"theory.js","layer":"theory"},
+    {"public":"parseChord","kind":"function","source":"padParseChordName","sourceFile":"theory.js","layer":"theory"},
+    {"public":"detectChord","kind":"function","source":"padDetectChord","sourceFile":"theory.js","layer":"theory"},
+    {"public":"applyTension","kind":"function","source":"padApplyTension","sourceFile":"theory.js","layer":"theory"},
+    {"public":"findParentScales","kind":"function","source":"padFindParentScales","sourceFile":"theory.js","layer":"theory"},
+    {"public":"dim7AvailableTensionPCs","kind":"function","source":"padGetDim7AvailableTensionPCs","sourceFile":"data.js","layer":"theory"},
+    {"public":"analyzeObservedShellUst","kind":"function","source":"padAnalyzeObservedShellUst","sourceFile":"observed-structure.js","layer":"theory"}
+  ]
+}
