@@ -168,7 +168,10 @@ describe('padParseChordName', () => {
   it('parses add chords beyond add9', () => {
     expect(padParseChordName('Cadd11').intervals).toEqual([0, 4, 7, 17]);
     expect(padParseChordName('Cadd#11').intervals).toEqual([0, 4, 7, 18]);
-    expect(padParseChordName('Caddb13').intervals).toEqual([0, 4, 7, 20]);
+    expect(padParseChordName('Caddb13')).toBeNull();
+    expect(padParseChordName('C(b6)').intervals).toEqual([0, 4, 7, 8]);
+    expect(padParseChordName('C(b13)')).toBeNull();
+    expect(padParseChordName('C7(b13)').intervals).toEqual([0, 4, 7, 10, 20]);
     expect(padParseChordName('Cmadd11').intervals).toEqual([0, 3, 7, 17]);
     expect(padParseChordName('Cmadd#11').intervals).toEqual([0, 3, 7, 18]);
   });
@@ -1194,15 +1197,15 @@ describe('padDetectChord', () => {
     it('G,C,E [67,72,76] \u2192 CMaj / G', () => {
       expect(hasMatch(padDetectChord([67, 72, 76]), 'CMaj / G')).toBe(true);
     });
-    it('B,G,A,D is Gadd9 / B, not Bm7(b13)', () => {
+    it('B,G,A,D keeps Gadd9 / B ahead of the altered Bm7(b13) reading', () => {
       const results = padDetectChord([59, 67, 69, 74]);
       expect(results[0].name).toBe('Gadd9 / B');
-      expect(results.some(r => r.name.indexOf('Bm7(b13)') >= 0)).toBe(false);
+      expect(results.some(r => r.name.indexOf('Bm7(b13)') >= 0)).toBe(true);
     });
     it('detects add chords beyond add9 on major and minor triads', () => {
       expect(padDetectChord([60, 64, 67, 77])[0].name).toBe('Cadd11');
       expect(padDetectChord([60, 64, 67, 78])[0].name).toBe('Cadd#11');
-      expect(padDetectChord([60, 64, 67, 68])[0].name).toBe('Caddb13');
+      expect(padDetectChord([60, 64, 67, 68])[0].name).toBe('C(b6)');
       expect(padDetectChord([60, 63, 67, 77])[0].name).toBe('Cmadd11');
       expect(padDetectChord([60, 63, 67, 78])[0].name).toBe('Cmadd#11');
     });
