@@ -21,39 +21,40 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Move observed metadata attachment after all candidate generation
+      - name: Move observed metadata attachment to final candidate boundary
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path('theory.js')
           s = p.read_text()
-          block = '''  // Every candidate keeps the exact observed pitch set even when its local
-          // harmonic spelling/ranking differs. Consumers must not reconstruct this.
-          for (var oi = 0; oi < candidates.length; oi++) {
-            candidates[oi].observedPCS = pcs.slice();
-            candidates[oi].observedPitchClasses = pcs.slice();
-            candidates[oi].observedBassPC = lowestPC;
-          }
+          start_marker = '  // Every candidate keeps the exact observed pitch set even when its local\n'
+          end_marker = '  // Chord-detect DB candidates already carry canonical semantic metadata.\n'
+          start = s.find(start_marker)
+          end = s.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit(f'observed metadata region not found: start={start}, end={end}')
+          block = s[start:end]
+          if block.count('observedPCS') != 1 or block.count('observedPitchClasses') != 1:
+              raise SystemExit('unexpected observed metadata block shape')
+          s = s[:start] + s[end:]
 
-          '''
-          if s.count(block) != 1:
-              raise SystemExit(f'expected one observed metadata block, got {s.count(block)}')
-          s = s.replace(block, '', 1)
           anchor = "  pinB7HybridNearTop('', 2);\n  pinB7HybridNearTop('m', 1);\n  return candidates.slice(0, 8);\n"
+          if s.count(anchor) != 1:
+              raise SystemExit(f'expected one final return anchor, got {s.count(anchor)}')
           replacement = "  pinB7HybridNearTop('', 2);\n  pinB7HybridNearTop('m', 1);\n\n" + block + "  return candidates.slice(0, 8);\n"
-          if anchor not in s:
-              raise SystemExit('final return anchor not found')
           s = s.replace(anchor, replacement, 1)
           p.write_text(s)
 
           p = Path('tests/pc8-harmonic-semantics.test.js')
           s = p.read_text()
           anchor = "  it('parses explicit b6 separately from seventh-chord b13', () => {\n"
-          test = "  it('attaches the exact observation to every returned candidate, including late hybrid candidates', () => {\n    const notes = [60, 62, 65, 70]; // C D F Bb; exercises late b7-over-bass hybrid pinning\n    const expected = [0, 2, 5, 10];\n    const results = padDetectChord(notes);\n    expect(results.length).toBeGreaterThan(0);\n    for (const candidate of results) {\n      expect(candidate.observedPCS).toEqual(expected);\n      expect(candidate.observedPitchClasses).toEqual(expected);\n      expect(candidate.observedBassPC).toBe(0);\n    }\n  });\n\n"
-          if anchor not in s:
-              raise SystemExit('test insertion anchor not found')
-          s = s.replace(anchor, test + anchor, 1)
+          test = "  it('attaches the exact observation to every returned hybrid candidate', () => {\n    const notes = [60, 62, 65, 70]; // C D F Bb; exercises b7-over-bass hybrid ranking\n    const expected = [0, 2, 5, 10];\n    const results = padDetectChord(notes);\n    expect(results.length).toBeGreaterThan(0);\n    for (const candidate of results) {\n      expect(candidate.observedPCS).toEqual(expected);\n      expect(candidate.observedPitchClasses).toEqual(expected);\n      expect(candidate.observedBassPC).toBe(0);\n    }\n  });\n\n"
+          if test not in s:
+              if anchor not in s:
+                  raise SystemExit('test insertion anchor not found')
+              s = s.replace(anchor, test + anchor, 1)
           p.write_text(s)
           PY
           git diff --check
