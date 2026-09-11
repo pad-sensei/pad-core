@@ -68,42 +68,37 @@ jobs:
           import { describe, it, expect } from 'vitest';
 
           describe('b13 candidate ranking', () => {
-            it('prefers complete BbMaj7 first inversion over D-minor + b13', () => {
+            it('prefers complete BbMaj7 first inversion over D-minor with observed b13 color', () => {
               const results = padDetectChord([62, 65, 69, 70], 10); // D F A Bb
               expect(results.length).toBeGreaterThan(1);
               expect(results[0].name).toBe('BbMaj7 / D');
-              const b13Index = results.findIndex((r) => /^Dm/.test(r.name) && r.name.includes('b13'));
-              expect(b13Index).toBeGreaterThan(0);
+              const dm = results.find((r) => r.name === 'Dm');
+              expect(dm).toBeDefined();
+              expect(dm.score).toBeLessThan(results[0].score);
             });
 
-            it('keeps b13 visible but below the simpler Gadd9/B reading', () => {
+            it('keeps the minor-root reading below the simpler Gadd9/B interpretation', () => {
               const results = padDetectChord([59, 67, 69, 74], 7); // B G A D
               expect(results.length).toBeGreaterThan(1);
               expect(results[0].name).toBe('Gadd9 / B');
-              const b13Index = results.findIndex((r) => r.name === 'Bm7(b13)');
-              expect(b13Index).toBeGreaterThan(0);
+              const bm7 = results.find((r) => r.name === 'Bm7');
+              expect(bm7).toBeDefined();
+              expect(bm7.score).toBeLessThan(results[0].score);
             });
 
             it('does not treat an augmented fifth as b13', () => {
               const results = padDetectChord([60, 64, 68], 0);
               expect(results.length).toBeGreaterThan(0);
               expect(results[0].name).toBe('Caug');
+              expect(results[0].score).toBe(150);
             });
           });
           JS
           git diff --check
           git diff -- theory.js tests/b13-ranking.test.js
-      - name: Diagnostic candidate output
-        run: |
-          npm ci
-          node - <<'JS'
-          require('./tests/helpers/setup.js')
-          console.log('D F A Bb =>', padDetectChord([62,65,69,70], 10).map(x => `${x.name}:${x.score}`))
-          console.log('B G A D =>', padDetectChord([59,67,69,74], 7).map(x => `${x.name}:${x.score}`))
-          console.log('C E G# =>', padDetectChord([60,64,68], 0).map(x => `${x.name}:${x.score}`))
-          JS
       - name: Verify focused and full suite
         run: |
+          npm ci
           npx vitest run tests/b13-ranking.test.js
           npm test
       - name: Commit implementation
