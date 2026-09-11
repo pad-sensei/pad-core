@@ -1,4 +1,4 @@
-name: Apply b13 ranking fix
+name: Apply pc8 harmonic semantics
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   implement:
-    if: ${{ !contains(github.event.head_commit.message, '[b13-impl]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[pc8-impl]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,90 +21,199 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Implement general b13 ranking penalty
+      - name: Implement b6 / #5 / b13 semantic separation
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+
+          # --- data.js: retire auto-detected addb13, keep seventh b13 vocabulary ---
+          p = Path('data.js')
+          s = p.read_text()
+          for old in [
+              "  'addb13': [0, 4, 7, 20],\n",
+              "    { name: 'addb13', pcs: [0,4,7,8] },\n",
+          ]:
+              if old not in s:
+                  raise SystemExit(f'data.js expected line not found: {old!r}')
+              s = s.replace(old, '', 1)
+          p.write_text(s)
+
+          # --- theory.js: explicit b6 notation + contextual detection/ranking ---
           p = Path('theory.js')
           s = p.read_text()
+
+          old = "          '11': 17, '#11': 18,\n          '13': 21, 'b13': 20, '7': 23,\n"
+          new = "          '11': 17, '#11': 18,\n          '13': 21, 'b13': 20, 'b6': 8, '7': 23,\n"
+          if old not in s:
+              raise SystemExit('parser tension map anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = "          var iv = TENSION_MAP[tensions[t]];\n          if (iv === undefined) { valid = false; break; }\n"
+          new = "          var iv = TENSION_MAP[tensions[t]];\n          if (iv === undefined) { valid = false; break; }\n          // b13 is an altered/seventh-chord tension in automatic semantics.\n          // A plain triad chromatic lower-sixth is written b6 instead.\n          if (tensions[t] === 'b13' && baseIntervals.indexOf(10) < 0) { valid = false; break; }\n"
+          if old not in s:
+              raise SystemExit('parser validation anchor not found')
+          s = s.replace(old, new, 1)
+
           old = '''function padRejectMinorSeventhFlat13(chordName, intervals) {
             return /^m7/.test(chordName || '')
               && (chordName || '').indexOf('b5') < 0
               && intervals[8];
           }
           '''
-          new = '''function padB13CandidatePenalty(chordName, intervals) {
-            if (!intervals[8]) return 0;
+          new = '''function padDetectedPc8Role(chordName, chordPCS, intervals) {
             var name = chordName || '';
-            // Pitch-class 8 is structural in augmented/#5 qualities. Those are not
-            // b13 readings and must not be demoted by this ambiguity heuristic.
-            if (name.indexOf('aug') >= 0 || name.indexOf('#5') >= 0) return 0;
-            // b13 is a valid observed color, but it is a weaker root signal than a
-            // complete conventional inversion. Keep the candidate; lower its rank.
-            return 40;
+            var pcs = chordPCS || [];
+            if (name.indexOf('b13') >= 0) return 'b13';
+            if (!intervals[8] || pcs.indexOf(8) >= 0) return null;
+            // With an actual flat seventh, pc8 may function as altered b13.
+            if (pcs.indexOf(10) >= 0) return 'b13';
+            // Over a plain major/minor triad, the same pc is a lower-sixth color,
+            // not a thirteenth. This keeps line-cliche spelling distinct.
+            if (name === 'Maj' || name === 'm' || name === 'maj' || name === '') return 'b6';
+            return null;
+          }
+
+          function padAppendDetectedPc8Role(chordName, chordPCS, intervals) {
+            var role = padDetectedPc8Role(chordName, chordPCS, intervals);
+            var name = chordName || '';
+            if (!role || name.indexOf(role) >= 0) return name;
+            if (role === 'b6' && (name === 'Maj' || name === 'maj' || name === '')) return '(b6)';
+            var trailing = name.match(/^(.*)\\(([^()]*)\\)$/);
+            if (trailing) return trailing[1] + '(' + trailing[2] + ',' + role + ')';
+            return name + '(' + role + ')';
+          }
+
+          function padPc8SemanticPenalty(chordName, chordPCS, intervals) {
+            var name = chordName || '';
+            var pcs = chordPCS || [];
+            var role = padDetectedPc8Role(name, pcs, intervals);
+            var penalty = (role === 'b6' || role === 'b13') ? 40 : 0;
+            // #5/aug is structural only when the natural fifth is not simultaneously
+            // defining the observed collection. Do not let subset matching hide 5+#5.
+            var isAugmented = name.indexOf('aug') >= 0 || name.indexOf('#5') >= 0 || name === '+';
+            if (isAugmented && pcs.indexOf(8) >= 0 && pcs.indexOf(7) < 0 && intervals[7]) penalty += 60;
+            return penalty;
           }
           '''
           if old not in s:
-              raise SystemExit('old b13 rejection helper not found')
+              raise SystemExit('old minor7-b13 rejection helper not found')
           s = s.replace(old, new, 1)
 
-          reject = '          if (padRejectMinorSeventhFlat13(chord.name, intervals)) continue;\n'
-          count = s.count(reject)
-          if count != 2:
-              raise SystemExit(f'expected 2 hard-reject callsites, found {count}')
+          reject = "          if (padRejectMinorSeventhFlat13(chord.name, intervals)) continue;\n"
+          if s.count(reject) != 2:
+              raise SystemExit(f'expected 2 old hard-reject callsites, got {s.count(reject)}')
           s = s.replace(reject, '')
 
-          needle = 'padAugAlteredPenalty(chord.name, intervals);'
-          count = s.count(needle)
-          if count != 2:
-              raise SystemExit(f'expected 2 candidate score penalty callsites, found {count}')
-          s = s.replace(needle,
+          score_anchor = 'padAugAlteredPenalty(chord.name, intervals);'
+          if s.count(score_anchor) != 2:
+              raise SystemExit(f'expected 2 score anchors, got {s.count(score_anchor)}')
+          s = s.replace(score_anchor,
               'padAugAlteredPenalty(chord.name, intervals)\n'
-              '            - padB13CandidatePenalty(chord.name, intervals);')
+              '            - padPc8SemanticPenalty(chord.name, chord.pcs, intervals);')
+
+          old_name = "          var rootName = padPreferredRootNoteName(rootPC, spellingKey);\n          var bass = lowestPC !== rootPC ? ' / ' + padChordIntervalNoteName(rootPC, lowestPC) : '';\n          var name = rootName + chord.name + bass;\n"
+          new_name = "          var rootName = padPreferredRootNoteName(rootPC, spellingKey);\n          var bass = lowestPC !== rootPC ? ' / ' + padChordIntervalNoteName(rootPC, lowestPC) : '';\n          var displayQuality = padAppendDetectedPc8Role(chord.name, chord.pcs, intervals);\n          var name = rootName + displayQuality + bass;\n"
+          if old_name not in s:
+              raise SystemExit('exact candidate name anchor not found')
+          s = s.replace(old_name, new_name, 1)
+
+          old_name2 = "            var rootName = padPreferredRootNoteName(rootPC, spellingKey);\n            var bass = lowestPC !== rootPC ? ' / ' + padChordIntervalNoteName(rootPC, lowestPC) : '';\n            var hasShell = (intervals[3] || intervals[4]) && (intervals[10] || intervals[11]);\n            var omitLabel = (chord.pcs.length >= 5 || hasShell) ? '' : '(omit5)';\n            var name = rootName + chord.name + omitLabel + bass;\n"
+          new_name2 = "            var rootName = padPreferredRootNoteName(rootPC, spellingKey);\n            var bass = lowestPC !== rootPC ? ' / ' + padChordIntervalNoteName(rootPC, lowestPC) : '';\n            var hasShell = (intervals[3] || intervals[4]) && (intervals[10] || intervals[11]);\n            var omitLabel = (chord.pcs.length >= 5 || hasShell) ? '' : '(omit5)';\n            var displayQuality = padAppendDetectedPc8Role(chord.name, chord.pcs, intervals);\n            var name = rootName + displayQuality + omitLabel + bass;\n"
+          if old_name2 not in s:
+              raise SystemExit('omit candidate name anchor not found')
+          s = s.replace(old_name2, new_name2, 1)
+
+          observed_anchor = "  // Chord-detect DB candidates already carry canonical semantic metadata.\n"
+          observed_insert = "  // Every candidate keeps the exact observed pitch set even when its local\n  // harmonic spelling/ranking differs. Consumers must not reconstruct this.\n  for (var oi = 0; oi < candidates.length; oi++) {\n    candidates[oi].observedPCS = pcs.slice();\n    candidates[oi].observedPitchClasses = pcs.slice();\n    candidates[oi].observedBassPC = lowestPC;\n  }\n\n"
+          if observed_anchor not in s:
+              raise SystemExit('observed metadata anchor not found')
+          s = s.replace(observed_anchor, observed_insert + observed_anchor, 1)
+          p.write_text(s)
+
+          # --- update legacy tests that encoded the discarded addb13 hypothesis ---
+          p = Path('tests/theory.test.js')
+          s = p.read_text()
+          old = "    expect(padParseChordName('Caddb13').intervals).toEqual([0, 4, 7, 20]);\n"
+          new = "    expect(padParseChordName('Caddb13')).toBeNull();\n    expect(padParseChordName('C(b6)').intervals).toEqual([0, 4, 7, 8]);\n    expect(padParseChordName('C(b13)')).toBeNull();\n    expect(padParseChordName('C7(b13)').intervals).toEqual([0, 4, 7, 10, 20]);\n"
+          if old not in s:
+              raise SystemExit('legacy Caddb13 parser expectation not found')
+          s = s.replace(old, new, 1)
+
+          old = "    it('B,G,A,D is Gadd9 / B, not Bm7(b13)', () => {\n      const results = padDetectChord([59, 67, 69, 74]);\n      expect(results[0].name).toBe('Gadd9 / B');\n      expect(results.some(r => r.name.indexOf('Bm7(b13)') >= 0)).toBe(false);\n    });\n"
+          new = "    it('B,G,A,D keeps Gadd9 / B ahead of the altered Bm7(b13) reading', () => {\n      const results = padDetectChord([59, 67, 69, 74]);\n      expect(results[0].name).toBe('Gadd9 / B');\n      expect(results.some(r => r.name.indexOf('Bm7(b13)') >= 0)).toBe(true);\n    });\n"
+          if old not in s:
+              raise SystemExit('legacy Bm7 suppression test not found')
+          s = s.replace(old, new, 1)
+
+          old = "      expect(padDetectChord([60, 64, 67, 68])[0].name).toBe('Caddb13');\n"
+          new = "      expect(padDetectChord([60, 64, 67, 68])[0].name).toBe('C(b6)');\n"
+          if old not in s:
+              raise SystemExit('legacy Caddb13 detector expectation not found')
+          s = s.replace(old, new, 1)
           p.write_text(s)
           PY
-          cat > tests/b13-ranking.test.js <<'JS'
+
+          cat > tests/pc8-harmonic-semantics.test.js <<'JS'
           import { describe, it, expect } from 'vitest';
 
-          describe('b13 candidate ranking', () => {
-            it('prefers complete BbMaj7 first inversion over D-minor with observed b13 color', () => {
+          describe('pc8 harmonic semantics: b6 / #5 / b13', () => {
+            it('prefers BbMaj7/D over a D-minor lower-sixth reading', () => {
               const results = padDetectChord([62, 65, 69, 70], 10); // D F A Bb
-              expect(results.length).toBeGreaterThan(1);
               expect(results[0].name).toBe('BbMaj7 / D');
-              const dm = results.find((r) => r.name === 'Dm');
-              expect(dm).toBeDefined();
-              expect(dm.score).toBeLessThan(results[0].score);
+              const dmColor = results.find(r => r.name === 'Dm(b6)');
+              expect(dmColor).toBeDefined();
+              expect(dmColor.score).toBeLessThan(results[0].score);
+              expect(results.every(r => !r.name.startsWith('Dm(b13)'))).toBe(true);
             });
 
-            it('keeps the minor-root reading below the simpler Gadd9/B interpretation', () => {
-              const results = padDetectChord([59, 67, 69, 74], 7); // B G A D
-              expect(results.length).toBeGreaterThan(1);
-              expect(results[0].name).toBe('Gadd9 / B');
-              const bm7 = results.find((r) => r.name === 'Bm7');
-              expect(bm7).toBeDefined();
-              expect(bm7.score).toBeLessThan(results[0].score);
+            it('spells a major-triad lower sixth as b6, never addb13', () => {
+              const results = padDetectChord([60, 64, 67, 68]); // C E G Ab
+              expect(results[0].name).toBe('C(b6)');
+              expect(results.every(r => !r.name.includes('addb13'))).toBe(true);
+              expect(results[0].observedPCS).toEqual([0, 4, 7, 8]);
             });
 
-            it('does not treat an augmented fifth as b13', () => {
-              const results = padDetectChord([60, 64, 68], 0);
-              expect(results.length).toBeGreaterThan(0);
+            it('keeps a clean augmented triad structural #5', () => {
+              const results = padDetectChord([60, 64, 68]); // C E G#
               expect(results[0].name).toBe('Caug');
-              expect(results[0].score).toBe(150);
+            });
+
+            it('uses b13 in flat-seventh context and keeps it ahead of augmented subsets', () => {
+              const results = padDetectChord([60, 64, 67, 68, 70]); // C E G Ab Bb
+              expect(results[0].name).toBe('C7(b13)');
+              expect(results[0].observedPCS).toEqual([0, 4, 7, 8, 10]);
+              const aug = results.find(r => r.name === 'Caug');
+              if (aug) expect(aug.score).toBeLessThan(results[0].score);
+            });
+
+            it('keeps Gadd9/B ahead of Bm7(b13) without deleting the latter', () => {
+              const results = padDetectChord([59, 67, 69, 74]); // B G A D
+              expect(results[0].name).toBe('Gadd9 / B');
+              const altered = results.find(r => r.name === 'Bm7(b13)');
+              expect(altered).toBeDefined();
+              expect(altered.score).toBeLessThan(results[0].score);
+            });
+
+            it('parses explicit b6 separately from seventh-chord b13', () => {
+              expect(padParseChordName('C(b6)').displayName).toBe('C(b6)');
+              expect(padParseChordName('C(b13)')).toBeNull();
+              expect(padParseChordName('C7(b13)').displayName).toBe('C7(b13)');
             });
           });
           JS
+
           git diff --check
-          git diff -- theory.js tests/b13-ranking.test.js
+          git diff -- data.js theory.js tests/theory.test.js tests/pc8-harmonic-semantics.test.js
       - name: Verify focused and full suite
         run: |
           npm ci
-          npx vitest run tests/b13-ranking.test.js
+          npx vitest run tests/pc8-harmonic-semantics.test.js
           npm test
       - name: Commit implementation
         run: |
           git config user.name 'daikainozaki-cyber'
           git config user.email 'daikainozaki@gmail.com'
-          git add theory.js tests/b13-ranking.test.js
-          git commit -m 'fix(theory): penalize b13 chord readings [b13-impl]'
+          git add data.js theory.js tests/theory.test.js tests/pc8-harmonic-semantics.test.js
+          git commit -m 'fix(theory): distinguish b6 #5 and b13 [pc8-impl]'
           git push origin HEAD:codex/b13-ranking-penalty
