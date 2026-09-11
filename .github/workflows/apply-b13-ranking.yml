@@ -1,0 +1,114 @@
+name: Apply b13 ranking fix
+
+on:
+  push:
+    branches:
+      - codex/b13-ranking-penalty
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: ${{ !contains(github.event.head_commit.message, '[b13-impl]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/b13-ranking-penalty
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Implement general b13 ranking penalty
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('theory.js')
+          s = p.read_text()
+          old = '''function padRejectMinorSeventhFlat13(chordName, intervals) {
+            return /^m7/.test(chordName || '')
+              && (chordName || '').indexOf('b5') < 0
+              && intervals[8];
+          }
+          '''
+          new = '''function padB13CandidatePenalty(chordName, intervals) {
+            if (!intervals[8]) return 0;
+            var name = chordName || '';
+            // Pitch-class 8 is structural in augmented/#5 qualities. Those are not
+            // b13 readings and must not be demoted by this ambiguity heuristic.
+            if (name.indexOf('aug') >= 0 || name.indexOf('#5') >= 0) return 0;
+            // b13 is a valid observed color, but it is a weaker root signal than a
+            // complete conventional inversion. Keep the candidate; lower its rank.
+            return 40;
+          }
+          '''
+          if old not in s:
+              raise SystemExit('old b13 rejection helper not found')
+          s = s.replace(old, new, 1)
+          reject = '          if (padRejectMinorSeventhFlat13(chord.name, intervals)) continue;\n'
+          count = s.count(reject)
+          if count != 2:
+              raise SystemExit(f'expected 2 hard-reject callsites, found {count}')
+          s = s.replace(reject, '')
+          old_score = '''          var score = (isRootPosition ? 100 : 0) + chord.pcs.length * 10 - extra
+            + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals);'''
+          new_score = '''          var score = (isRootPosition ? 100 : 0) + chord.pcs.length * 10 - extra
+            + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals)
+            - padB13CandidatePenalty(chord.name, intervals);'''
+          if old_score not in s:
+              raise SystemExit('full candidate score formula not found')
+          s = s.replace(old_score, new_score, 1)
+          old_omit = '''            var score = rootBonus + chord.pcs.length * 10 - extra - 5 - extraPenalty
+              + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals);'''
+          new_omit = '''            var score = rootBonus + chord.pcs.length * 10 - extra - 5 - extraPenalty
+              + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals)
+              - padB13CandidatePenalty(chord.name, intervals);'''
+          if old_omit not in s:
+              raise SystemExit('omit5 candidate score formula not found')
+          s = s.replace(old_omit, new_omit, 1)
+          p.write_text(s)
+          PY
+          cat > tests/b13-ranking.test.js <<'JS'
+          import { describe, it, expect } from 'vitest';
+
+          describe('b13 candidate ranking', () => {
+            it('prefers complete BbMaj7 first inversion over D-minor + b13', () => {
+              const results = padDetectChord([62, 65, 69, 70], 10); // D F A Bb
+              expect(results.length).toBeGreaterThan(1);
+              expect(results[0].name).toBe('BbMaj7 / D');
+              const b13Index = results.findIndex((r) => /^Dm/.test(r.name) && r.name.includes('b13'));
+              expect(b13Index).toBeGreaterThan(0);
+            });
+
+            it('keeps b13 visible but below the simpler Gadd9/B reading', () => {
+              const results = padDetectChord([59, 67, 69, 74], 7); // B G A D
+              expect(results.length).toBeGreaterThan(1);
+              expect(results[0].name).toBe('Gadd9 / B');
+              const b13Index = results.findIndex((r) => r.name === 'Bm7(b13)');
+              expect(b13Index).toBeGreaterThan(0);
+            });
+
+            it('does not treat an augmented fifth as b13', () => {
+              const results = padDetectChord([60, 64, 68], 0);
+              expect(results.length).toBeGreaterThan(0);
+              expect(results[0].name).toBe('Caug');
+            });
+          });
+          JS
+          git diff --check
+          git diff -- theory.js tests/b13-ranking.test.js
+      - name: Verify focused and full suite
+        run: |
+          npm ci
+          npx vitest run tests/b13-ranking.test.js
+          npm test
+      - name: Commit implementation
+        run: |
+          git config user.name 'daikainozaki-cyber'
+          git config user.email 'daikainozaki@gmail.com'
+          git add theory.js tests/b13-ranking.test.js
+          git commit -m 'fix(theory): penalize b13 chord readings [b13-impl]'
+          git push origin HEAD:codex/b13-ranking-penalty
