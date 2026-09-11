@@ -2258,14 +2258,6 @@ function padDetectChord(midiNotes, spellingKey) {
     }
   }
 
-  // Every candidate keeps the exact observed pitch set even when its local
-  // harmonic spelling/ranking differs. Consumers must not reconstruct this.
-  for (var oi = 0; oi < candidates.length; oi++) {
-    candidates[oi].observedPCS = pcs.slice();
-    candidates[oi].observedPitchClasses = pcs.slice();
-    candidates[oi].observedBassPC = lowestPC;
-  }
-
   // Chord-detect DB candidates already carry canonical semantic metadata.
   // Do not rewrite only display names here: that would desynchronize name,
   // quality, and exact tension intervals while also creating duplicates.
@@ -2285,6 +2277,15 @@ function padDetectChord(midiNotes, spellingKey) {
   }
   pinB7HybridNearTop('', 2);
   pinB7HybridNearTop('m', 1);
+
+  // Every candidate keeps the exact observed pitch set even when its local
+  // harmonic spelling/ranking differs. Consumers must not reconstruct this.
+  for (var oi = 0; oi < candidates.length; oi++) {
+    candidates[oi].observedPCS = pcs.slice();
+    candidates[oi].observedPitchClasses = pcs.slice();
+    candidates[oi].observedBassPC = lowestPC;
+  }
+
   return candidates.slice(0, 8);
 }
 

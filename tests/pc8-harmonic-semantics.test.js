@@ -38,6 +38,18 @@ describe('pc8 harmonic semantics: b6 / #5 / b13', () => {
     expect(altered.score).toBeLessThan(results[0].score);
   });
 
+  it('attaches the exact observation to every returned hybrid candidate', () => {
+    const notes = [60, 62, 65, 70]; // C D F Bb; exercises b7-over-bass hybrid ranking
+    const expected = [0, 2, 5, 10];
+    const results = padDetectChord(notes);
+    expect(results.length).toBeGreaterThan(0);
+    for (const candidate of results) {
+      expect(candidate.observedPCS).toEqual(expected);
+      expect(candidate.observedPitchClasses).toEqual(expected);
+      expect(candidate.observedBassPC).toBe(0);
+    }
+  });
+
   it('parses explicit b6 separately from seventh-chord b13', () => {
     expect(padParseChordName('C(b6)').displayName).toBe('C(b6)');
     expect(padParseChordName('C(b13)')).toBeNull();
