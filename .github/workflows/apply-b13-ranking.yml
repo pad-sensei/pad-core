@@ -48,27 +48,20 @@ jobs:
           if old not in s:
               raise SystemExit('old b13 rejection helper not found')
           s = s.replace(old, new, 1)
+
           reject = '          if (padRejectMinorSeventhFlat13(chord.name, intervals)) continue;\n'
           count = s.count(reject)
           if count != 2:
               raise SystemExit(f'expected 2 hard-reject callsites, found {count}')
           s = s.replace(reject, '')
-          old_score = '''          var score = (isRootPosition ? 100 : 0) + chord.pcs.length * 10 - extra
-            + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals);'''
-          new_score = '''          var score = (isRootPosition ? 100 : 0) + chord.pcs.length * 10 - extra
-            + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals)
-            - padB13CandidatePenalty(chord.name, intervals);'''
-          if old_score not in s:
-              raise SystemExit('full candidate score formula not found')
-          s = s.replace(old_score, new_score, 1)
-          old_omit = '''            var score = rootBonus + chord.pcs.length * 10 - extra - 5 - extraPenalty
-              + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals);'''
-          new_omit = '''            var score = rootBonus + chord.pcs.length * 10 - extra - 5 - extraPenalty
-              + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals)
-              - padB13CandidatePenalty(chord.name, intervals);'''
-          if old_omit not in s:
-              raise SystemExit('omit5 candidate score formula not found')
-          s = s.replace(old_omit, new_omit, 1)
+
+          needle = 'padAugAlteredPenalty(chord.name, intervals);'
+          count = s.count(needle)
+          if count != 2:
+              raise SystemExit(f'expected 2 candidate score penalty callsites, found {count}')
+          s = s.replace(needle,
+              'padAugAlteredPenalty(chord.name, intervals)\n'
+              '            - padB13CandidatePenalty(chord.name, intervals);')
           p.write_text(s)
           PY
           cat > tests/b13-ranking.test.js <<'JS'
@@ -100,9 +93,17 @@ jobs:
           JS
           git diff --check
           git diff -- theory.js tests/b13-ranking.test.js
-      - name: Verify focused and full suite
+      - name: Diagnostic candidate output
         run: |
           npm ci
+          node - <<'JS'
+          require('./tests/helpers/setup.js')
+          console.log('D F A Bb =>', padDetectChord([62,65,69,70], 10).map(x => `${x.name}:${x.score}`))
+          console.log('B G A D =>', padDetectChord([59,67,69,74], 7).map(x => `${x.name}:${x.score}`))
+          console.log('C E G# =>', padDetectChord([60,64,68], 0).map(x => `${x.name}:${x.score}`))
+          JS
+      - name: Verify focused and full suite
+        run: |
           npx vitest run tests/b13-ranking.test.js
           npm test
       - name: Commit implementation
