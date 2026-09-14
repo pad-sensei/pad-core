@@ -1,4 +1,4 @@
-name: Apply and verify v1.8.1 altered dominant resolution
+name: Verify v1.8.1 altered dominant resolution
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
@@ -18,8 +18,6 @@ jobs:
         with:
           ref: codex/v181-altered-dominant-resolution
           fetch-depth: 80
-      - name: Apply duplicate-candidate repair
-        run: python3 -c "import base64;exec(base64.b64decode('CmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aApwID0gUGF0aCgndGhlb3J5LmpzJykKcyA9IHAucmVhZF90ZXh0KCkKb2xkID0gIiIiICAgIGZvciAodmFyIGNpID0gMDsgY2kgPCBjYW5kaWRhdGVzLmxlbmd0aDsgY2krKykgewogICAgICBpZiAoY2FuZGlkYXRlc1tjaV0ubmFtZSA9PT0gbmFtZSkgewogICAgICAgIGNhbmRpZGF0ZXNbY2ldLnNjb3JlID0gTWF0aC5tYXgoY2FuZGlkYXRlc1tjaV0uc2NvcmUgfHwgMCwgc2NvcmUpOwogICAgICAgIGlmIChkZXRhaWxzKSBPYmplY3QuYXNzaWduKGNhbmRpZGF0ZXNbY2ldLCBkZXRhaWxzKTsKICAgICAgICByZXR1cm47CiAgICAgIH0KICAgIH0KIiIiCm5ldyA9ICIiIiAgICBmb3IgKHZhciBjaSA9IDA7IGNpIDwgY2FuZGlkYXRlcy5sZW5ndGg7IGNpKyspIHsKICAgICAgaWYgKGNhbmRpZGF0ZXNbY2ldLm5hbWUgPT09IG5hbWUpIHsKICAgICAgICB2YXIgcHJldmlvdXNTY29yZSA9IGNhbmRpZGF0ZXNbY2ldLnNjb3JlIHx8IDA7CiAgICAgICAgdmFyIHByZXZpb3VzVGVuc2lvbnMgPSBBcnJheS5pc0FycmF5KGNhbmRpZGF0ZXNbY2ldLnRlbnNpb25MYWJlbHMpID8gY2FuZGlkYXRlc1tjaV0udGVuc2lvbkxhYmVscy5sZW5ndGggOiAwOwogICAgICAgIHZhciBpbmNvbWluZ1RlbnNpb25zID0gZGV0YWlscyAmJiBBcnJheS5pc0FycmF5KGRldGFpbHMudGVuc2lvbkxhYmVscykgPyBkZXRhaWxzLnRlbnNpb25MYWJlbHMubGVuZ3RoIDogMDsKICAgICAgICAvLyBBIGRpc3BsYXktZGVyaXZlZCBwYzggcm9sZSBjYW4gY3JlYXRlIHRoZSBzYW1lIGNhbm9uaWNhbCBuYW1lIGJlZm9yZQogICAgICAgIC8vIHRoZSByaWNoZXIgcmVnaXN0ZXJlZCBiMTMgZW50cnkgaXMgdmlzaXRlZC4gS2VlcCB0aGUgaGlnaGVzdC1zY29yaW5nCiAgICAgICAgLy8gc3RydWN0dXJhbCByZWFsaXphdGlvbiwgYW5kIG9uIGEgdGllIHByZWZlciBtZXRhZGF0YSB0aGF0IGFjdHVhbGx5CiAgICAgICAgLy8gY2FycmllcyB0aGUgbmFtZWQgdGVuc2lvbnMuIFRoaXMgbWFrZXMgUHVzaE9yQnVtcCBsaXZlIHVwIHRvIGl0cyBuYW1lLgogICAgICAgIGlmIChzY29yZSA+IHByZXZpb3VzU2NvcmUgfHwgKHNjb3JlID09PSBwcmV2aW91c1Njb3JlICYmIGluY29taW5nVGVuc2lvbnMgPiBwcmV2aW91c1RlbnNpb25zKSkgewogICAgICAgICAgY2FuZGlkYXRlc1tjaV0uc2NvcmUgPSBzY29yZTsKICAgICAgICAgIGlmIChkZXRhaWxzKSBPYmplY3QuYXNzaWduKGNhbmRpZGF0ZXNbY2ldLCBkZXRhaWxzKTsKICAgICAgICB9CiAgICAgICAgcmV0dXJuOwogICAgICB9CiAgICB9CiIiIgppZiBvbGQgaW4gczoKICAgIHMgPSBzLnJlcGxhY2Uob2xkLCBuZXcsIDEpCmVsaWYgbmV3IG5vdCBpbiBzOgogICAgcmFpc2UgU3lzdGVtRXhpdCgncGFkUHVzaE9yQnVtcENhbmRpZGF0ZSBhbmNob3Igbm90IGZvdW5kJykKCm9sZF9ndWFyZCA9ICJpZiAoIXNlZW5OYW1lc1tuYW1lXSkgcGFkUHVzaE9yQnVtcENhbmRpZGF0ZShuYW1lLCByb290UEMsIHNjb3JlLCBwYWREZXRlY3REZXRhaWxzKGNob3JkKSk7IgppZiBvbGRfZ3VhcmQgaW4gczoKICAgIHMgPSBzLnJlcGxhY2Uob2xkX2d1YXJkLCAicGFkUHVzaE9yQnVtcENhbmRpZGF0ZShuYW1lLCByb290UEMsIHNjb3JlLCBwYWREZXRlY3REZXRhaWxzKGNob3JkKSk7IikKZWxpZiBzLmNvdW50KCJwYWRQdXNoT3JCdW1wQ2FuZGlkYXRlKG5hbWUsIHJvb3RQQywgc2NvcmUsIHBhZERldGVjdERldGFpbHMoY2hvcmQpKTsiKSA8IDI6CiAgICByYWlzZSBTeXN0ZW1FeGl0KCdleGFjdC9vbWl0IGJ1bXAgY2FsbHNpdGVzIG5vdCBmb3VuZCcpCnAud3JpdGVfdGV4dChzKQoKdCA9IFBhdGgoJ3Rlc3RzL2FsdGVyZWQtZG9taW5hbnQtcmVzb2x1dGlvbi50ZXN0LmpzJykKdHMgPSB0LnJlYWRfdGV4dCgpCm9sZF90ZXN0ID0gIiAgICBleHBlY3QocmVzb2x2ZWRbMF0uaXNUb3BSYW5rZWQpLnRvQmUodHJ1ZSk7XG4gIH0pOyIKbmV3X3Rlc3QgPSAiICAgIGV4cGVjdChyZXNvbHZlZFswXS5pc1RvcFJhbmtlZCkudG9CZSh0cnVlKTtcbiAgICBleHBlY3QocmVzb2x2ZWRbMF0ucXVhbGl0eSkudG9CZSgnNycpO1xuICAgIGV4cGVjdChyZXNvbHZlZFswXS50ZW5zaW9uTGFiZWxzKS50b0NvbnRhaW4oJ2IxMycpO1xuICB9KTsiCmlmIG9sZF90ZXN0IGluIHRzOgogICAgdHMgPSB0cy5yZXBsYWNlKG9sZF90ZXN0LCBuZXdfdGVzdCwgMSkKdC53cml0ZV90ZXh0KHRzKQo='))"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -33,11 +31,4 @@ jobs:
         run: |
           git diff --check
           npm audit --omit=dev
-      - name: Commit verified repair
-        run: |
-          git config user.name 'daikainozaki-cyber'
-          git config user.email 'daikainozaki@gmail.com'
-          git add theory.js tests/altered-dominant-resolution.test.js
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'fix(theory): preserve canonical altered dominant candidates'
-          git push origin HEAD:codex/v181-altered-dominant-resolution
+          test -z "$(git status --porcelain)"
