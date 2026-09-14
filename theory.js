@@ -2040,7 +2040,6 @@ function padDetectChord(midiNotes, spellingKey) {
   lowestPC = lowestPC % 12;
   if (padIsUnnameableMajorSplitThirdColor(pcs, lowestPC)) return [];
   var candidates = [];
-  var seenNames = {};
   var lowestHasShell = padHasBassShell(pcs, lowestPC);
   function padPushOrBumpCandidate(name, rootPC, score, details) {
     details = details || padSimpleDetectDetails('unknown', []);
@@ -2060,7 +2059,6 @@ function padDetectChord(midiNotes, spellingKey) {
         return;
       }
     }
-    seenNames[name] = true;
     candidates.push(Object.assign({ name: name, rootPC: rootPC, score: score }, details));
   }
 
@@ -2207,7 +2205,6 @@ function padDetectChord(midiNotes, spellingKey) {
         var hybridName = padPreferredRootNoteName(hybridRoot, spellingKey) + hybridQuality.suffix + ' / ' + padChordIntervalNoteName(hybridRoot, lowestPC);
         var hybridAlreadyListed = candidates.some(function(c) { return c.name === hybridName; });
         if (!hybridAlreadyListed) {
-          seenNames[hybridName] = true;
           padPushOrBumpCandidate(hybridName, hybridRoot, 144,
             padSimpleDetectDetails(hybridQuality.suffix || 'Maj', [0, hybridQuality.third, 7]));
         }
@@ -2224,7 +2221,6 @@ function padDetectChord(midiNotes, spellingKey) {
     var rootPC3 = (lowestPC + 10) % 12;
     var name3 = padPreferredRootNoteName(rootPC3, spellingKey) + suffix + ' / ' + padChordIntervalNoteName(rootPC3, lowestPC);
     if (!candidates.some(function(c) { return c.name === name3; })) {
-      seenNames[name3] = true;
       padPushOrBumpCandidate(name3, rootPC3, 144,
         padSimpleDetectDetails(suffix || 'Maj', [0, thirdFromBass === 2 ? 4 : 3, 7]));
     }
