@@ -1,0 +1,63 @@
+name: TUNER PR26 seenNames cleanup
+
+on:
+  push:
+    branches:
+      - codex/v181-altered-dominant-resolution
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/v181-altered-dominant-resolution
+          fetch-depth: 2
+      - name: Guard audited parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "a2d2e3378fb99c10aec4e0c6d4908f6a118fd229"
+      - name: Remove dead seenNames state
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('theory.js')
+          s = p.read_text()
+          replacements = {
+              '  var seenNames = {};\n': '',
+              '    seenNames[name] = true;\n': '',
+              '          seenNames[hybridName] = true;\n': '',
+              '      seenNames[name3] = true;\n': '',
+          }
+          for old, new in replacements.items():
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one occurrence of {old!r}, got {count}')
+              s = s.replace(old, new, 1)
+          if 'seenNames' in s:
+              raise SystemExit('unexpected seenNames residue remains')
+          p.write_text(s)
+      - name: Verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npx vitest run tests/altered-dominant-resolution.test.js
+          npm test
+          npm audit --omit=dev
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=no | grep -v '^ M theory.js$' || true)"
+      - name: Commit cleanup and remove carrier
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/tuner-pr26-seennames-cleanup.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add theory.js .github/workflows/tuner-pr26-seennames-cleanup.yml
+          git commit -m "chore(v1.8.1): remove dead seenNames state"
+          git push origin HEAD:codex/v181-altered-dominant-resolution
