@@ -29,10 +29,11 @@ jobs:
           Object.assign(globalThis, require('./data.js'));
           Object.assign(globalThis, require('./theory.js'));
           Object.assign(globalThis, require('./chord-resolver.js'));
+          console.log('DB b13', CHORD_DETECT_DB.filter(c => c.name === '7(b13)' || c.name === '7(b9,b13)').map(c => ({name:c.name, quality:c.quality, pcs:c.pcs, chordPCS:c.chordPCS, tensionLabels:c.tensionLabels})));
           for (const notes of [[34,44,50,54,59], [34,44,50,54]]) {
             console.log('NOTES', notes);
-            console.log('RAW', padDetectChord(notes, 10).map(c => ({name:c.name, score:c.score, quality:c.quality, chordPCS:c.chordPCS})));
-            console.log('RESOLVED', padResolveChordCandidates(notes, 10).map(c => ({name:c.name, score:c.score, resolutionScore:c.resolutionScore, quality:c.quality, completeness:c.resolutionCompleteness, chordPCS:c.chordPCS, unexplained:c.resolutionUnexplainedPCS, unplayed:c.resolutionUnplayedPCS})));
+            console.log('RAW', padDetectChord(notes, 10).map(c => ({name:c.name, score:c.score, quality:c.quality, chordPCS:c.chordPCS, tensionLabels:c.tensionLabels})));
+            console.log('RESOLVED', padResolveChordCandidates(notes, 10).map(c => ({name:c.name, score:c.score, resolutionScore:c.resolutionScore, quality:c.quality, completeness:c.resolutionCompleteness, chordPCS:c.chordPCS, tensionLabels:c.tensionLabels, unexplained:c.resolutionUnexplainedPCS, unplayed:c.resolutionUnplayedPCS})));
           }
           NODE
       - name: Focused regression
