@@ -72,7 +72,7 @@ function padParseChordName(input) {
         var TENSION_MAP = {
           '9': 14, 'b9': 13, '#9': 15,
           '11': 17, '#11': 18,
-          '13': 21, 'b13': 20, '7': 23,
+          '13': 21, 'b13': 20, 'b6': 8, '7': 23,
           '#5': 8, 'b5': 6,
         };
         var baseIntervals = PAD_QUALITY_INTERVALS[baseQ].slice();
@@ -81,6 +81,9 @@ function padParseChordName(input) {
         for (var t = 0; t < tensions.length; t++) {
           var iv = TENSION_MAP[tensions[t]];
           if (iv === undefined) { valid = false; break; }
+          // b13 is an altered/seventh-chord tension in automatic semantics.
+          // A plain triad chromatic lower-sixth is written b6 instead.
+          if (tensions[t] === 'b13' && baseIntervals.indexOf(10) < 0) { valid = false; break; }
           if (tensions[t] === 'b5' || tensions[t] === '#5') {
             var idx = baseIntervals.indexOf(7);
             if (idx >= 0) baseIntervals[idx] = iv;
@@ -1936,10 +1939,39 @@ function padHasBassShell(pcs, bassPC) {
   return (intervals[3] || intervals[4]) && (intervals[10] || intervals[11]);
 }
 
-function padRejectMinorSeventhFlat13(chordName, intervals) {
-  return /^m7/.test(chordName || '')
-    && (chordName || '').indexOf('b5') < 0
-    && intervals[8];
+function padDetectedPc8Role(chordName, chordPCS, intervals) {
+  var name = chordName || '';
+  var pcs = chordPCS || [];
+  if (name.indexOf('b13') >= 0) return 'b13';
+  if (!intervals[8] || pcs.indexOf(8) >= 0) return null;
+  // With an actual flat seventh, pc8 may function as altered b13.
+  if (pcs.indexOf(10) >= 0) return 'b13';
+  // Over a plain major/minor triad, the same pc is a lower-sixth color,
+  // not a thirteenth. This keeps line-cliche spelling distinct.
+  if (name === 'Maj' || name === 'm' || name === 'maj' || name === '') return 'b6';
+  return null;
+}
+
+function padAppendDetectedPc8Role(chordName, chordPCS, intervals) {
+  var role = padDetectedPc8Role(chordName, chordPCS, intervals);
+  var name = chordName || '';
+  if (!role || name.indexOf(role) >= 0) return name;
+  if (role === 'b6' && (name === 'Maj' || name === 'maj' || name === '')) return '(b6)';
+  var trailing = name.match(/^(.*)\(([^()]*)\)$/);
+  if (trailing) return trailing[1] + '(' + trailing[2] + ',' + role + ')';
+  return name + '(' + role + ')';
+}
+
+function padPc8SemanticPenalty(chordName, chordPCS, intervals) {
+  var name = chordName || '';
+  var pcs = chordPCS || [];
+  var role = padDetectedPc8Role(name, pcs, intervals);
+  var penalty = (role === 'b6' || role === 'b13') ? 40 : 0;
+  // #5/aug is structural only when the natural fifth is not simultaneously
+  // defining the observed collection. Do not let subset matching hide 5+#5.
+  var isAugmented = name.indexOf('aug') >= 0 || name.indexOf('#5') >= 0 || name === '+';
+  if (isAugmented && pcs.indexOf(8) >= 0 && pcs.indexOf(7) < 0 && intervals[7]) penalty += 60;
+  return penalty;
 }
 
 function padAugAlteredPenalty(chordName, intervals) {
@@ -2061,15 +2093,16 @@ function padDetectChord(midiNotes, spellingKey) {
           if (intervals[chord.pcs[k]]) matched++;
         }
         if (matched === chord.pcs.length) {
-          if (padRejectMinorSeventhFlat13(chord.name, intervals)) continue;
           if (padRejectDominantSlashOverBassShell(chord.name, rootPC, lowestPC, lowestHasShell)) continue;
           var extra = pcs.length - chord.pcs.length;
           var isRootPosition = rootPC === lowestPC;
           var score = (isRootPosition ? 100 : 0) + chord.pcs.length * 10 - extra
-            + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals);
+            + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals)
+            - padPc8SemanticPenalty(chord.name, chord.pcs, intervals);
           var rootName = padPreferredRootNoteName(rootPC, spellingKey);
           var bass = lowestPC !== rootPC ? ' / ' + padChordIntervalNoteName(rootPC, lowestPC) : '';
-          var name = rootName + chord.name + bass;
+          var displayQuality = padAppendDetectedPc8Role(chord.name, chord.pcs, intervals);
+          var name = rootName + displayQuality + bass;
           if (!seenNames[name]) padPushOrBumpCandidate(name, rootPC, score, padDetectDetails(chord));
         }
       }
@@ -2087,19 +2120,20 @@ function padDetectChord(midiNotes, spellingKey) {
             if (intervals[omit5pcs[k]]) matched++;
           }
           if (matched === omit5pcs.length) {
-            if (padRejectMinorSeventhFlat13(chord.name, intervals)) continue;
-            if (padRejectDominantSlashOverBassShell(chord.name, rootPC, lowestPC, lowestHasShell)) continue;
+              if (padRejectDominantSlashOverBassShell(chord.name, rootPC, lowestPC, lowestHasShell)) continue;
             var extra = pcs.length - omit5pcs.length;
             var isRootPosition = rootPC === lowestPC;
             var rootBonus = (isRootPosition && extra === 0) ? 100 : 0;
             var extraPenalty = extra > 0 ? extra * 35 : 0;
             var score = rootBonus + chord.pcs.length * 10 - extra - 5 - extraPenalty
-              + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals);
+              + padShellScoreBonus(intervals) - padAugAlteredPenalty(chord.name, intervals)
+            - padPc8SemanticPenalty(chord.name, chord.pcs, intervals);
             var rootName = padPreferredRootNoteName(rootPC, spellingKey);
             var bass = lowestPC !== rootPC ? ' / ' + padChordIntervalNoteName(rootPC, lowestPC) : '';
             var hasShell = (intervals[3] || intervals[4]) && (intervals[10] || intervals[11]);
             var omitLabel = (chord.pcs.length >= 5 || hasShell) ? '' : '(omit5)';
-            var name = rootName + chord.name + omitLabel + bass;
+            var displayQuality = padAppendDetectedPc8Role(chord.name, chord.pcs, intervals);
+            var name = rootName + displayQuality + omitLabel + bass;
             if (!seenNames[name]) padPushOrBumpCandidate(name, rootPC, score, padDetectDetails(chord));
           }
         }
@@ -2243,6 +2277,15 @@ function padDetectChord(midiNotes, spellingKey) {
   }
   pinB7HybridNearTop('', 2);
   pinB7HybridNearTop('m', 1);
+
+  // Every candidate keeps the exact observed pitch set even when its local
+  // harmonic spelling/ranking differs. Consumers must not reconstruct this.
+  for (var oi = 0; oi < candidates.length; oi++) {
+    candidates[oi].observedPCS = pcs.slice();
+    candidates[oi].observedPitchClasses = pcs.slice();
+    candidates[oi].observedBassPC = lowestPC;
+  }
+
   return candidates.slice(0, 8);
 }
 
