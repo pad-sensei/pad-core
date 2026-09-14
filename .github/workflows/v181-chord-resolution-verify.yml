@@ -1,0 +1,27 @@
+name: v1.8.1 chord resolution verify
+
+on:
+  pull_request:
+    branches:
+      - codex/b13-ranking-penalty
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Focused v1.8.1 chord resolver regressions
+        run: npx vitest run tests/chord-resolver.test.js tests/pc8-harmonic-semantics.test.js
+      - name: Full pad-core suite
+        run: npm test
+      - name: Diff check
+        run: git diff --check HEAD^
