@@ -22,15 +22,15 @@ describe('v1.8.1 chord resolution completeness', () => {
     expect(resolved.some(candidate => candidate.name === 'Edim')).toBe(false);
   });
 
-  it('resolves E G B C as CMaj7/E and removes the partial Em user-facing reading', () => {
+  it('resolves E G B C as CMaj7/E and removes the partial Em(b6) user-facing reading', () => {
     const notes = [64, 67, 71, 72];
     const raw = padDetectChord(notes);
-    expect(raw.some(candidate => candidate.name === 'Em')).toBe(true);
+    expect(raw.some(candidate => candidate.name === 'Em(b6)')).toBe(true);
 
     const resolved = padResolveChordCandidates(notes);
     expect(resolved[0].name).toBe('CMaj7 / E');
     expect(resolved[0].resolutionCompleteness).toBe('exact');
-    expect(resolved.some(candidate => candidate.name === 'Em')).toBe(false);
+    expect(resolved.some(candidate => candidate.name === 'Em(b6)')).toBe(false);
   });
 
   it('keeps dominant seventh inversions complete across every transposition and inversion', () => {
