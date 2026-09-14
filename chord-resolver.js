@@ -41,10 +41,10 @@ function padResolverCandidatePitchClasses(candidate, bassPC) {
     return padResolverPitchClass(candidate.rootPC + pc);
   });
 
-  // A slash spelling explicitly accounts for the played bass even when that
-  // pitch is not part of the upper structure's chordPCS. This keeps complete
-  // pedal/slash interpretations such as F/G from being mistaken for partials.
-  if (bassPC !== null && String(candidate.name || '').indexOf(' / ') >= 0) {
+  // Any non-root-bass candidate structurally represents an inversion or a
+  // slash/pedal reading. Account for the observed bass without inspecting the
+  // rendered display name so formatting/localization cannot change semantics.
+  if (bassPC !== null && candidate.rootPC !== bassPC) {
     abs.push(bassPC);
   }
   return padResolverUniquePitchClasses(abs);
