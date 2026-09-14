@@ -70,33 +70,46 @@ function padResolveChordCandidateList(midiNotes, rawCandidates) {
     copy.resolutionExplainedPCS = explained;
     copy.resolutionUnexplainedPCS = unexplained;
     copy.resolutionUnplayedPCS = unplayed;
+    copy.resolutionChordCardinality = padResolverUniquePitchClasses(copy.chordPCS || []).length;
     copy.resolutionOriginalIndex = index;
+    copy.resolutionSubsetPenalty = 0;
+    copy.resolutionScore = Number(copy.score) || 0;
     return copy;
   });
 
-  var hasExact = candidates.some(function(candidate) {
-    return candidate.resolutionCompleteness === 'exact';
+  // The v1.8.1 correction is deliberately narrow: do not globally reorder
+  // every exact slash/hybrid/tension interpretation. Only a *three-note subset*
+  // is demoted when the same observation also has a complete 4+ note chord.
+  // That fixes C7/E vs Edim and CMaj7/E vs Em(b6) without changing established
+  // altered-dominant, sus, pedal and upper-structure rankings.
+  var hasExactTetrad = candidates.some(function(candidate) {
+    return candidate.resolutionCompleteness === 'exact'
+      && candidate.resolutionChordCardinality >= 4;
   });
 
-  // When a complete supported harmony exists, a three-note root-position
-  // subset with an observed extra is not a competing user-facing chord name.
-  // The raw detector still retains it for transparent/debug/theory inspection.
-  if (hasExact) {
+  if (hasExactTetrad) {
     candidates = candidates.filter(function(candidate) {
-      var cardinality = padResolverUniquePitchClasses(candidate.chordPCS || []).length;
-      var incompleteTriad = cardinality === 3
+      var incompleteTriad = candidate.resolutionChordCardinality === 3
         && candidate.resolutionCompleteness !== 'exact'
         && candidate.resolutionUnexplainedPCS.length > 0;
-      return !incompleteTriad;
+      if (!incompleteTriad) return true;
+
+      // A bare diminished-triad label such as Edim hides the actually played
+      // dominant root in E-G-Bb-C. Keep it in raw padDetectChord() for
+      // transparency/debugging, but do not expose it as a resolved chord name.
+      if (candidate.quality === 'dim') return false;
+
+      // Named color readings such as Dm(b6) / Em(b6) remain available as lower
+      // alternatives because their display spelling acknowledges the extra pitch.
+      candidate.resolutionSubsetPenalty = 200;
+      candidate.resolutionScore = (Number(candidate.score) || 0) - candidate.resolutionSubsetPenalty;
+      return true;
     });
   }
 
   candidates.sort(function(a, b) {
-    var aExact = a.resolutionCompleteness === 'exact' ? 1 : 0;
-    var bExact = b.resolutionCompleteness === 'exact' ? 1 : 0;
-    if (aExact !== bExact) return bExact - aExact;
-    var aScore = Number(a.score) || 0;
-    var bScore = Number(b.score) || 0;
+    var aScore = Number(a.resolutionScore) || 0;
+    var bScore = Number(b.resolutionScore) || 0;
     if (aScore !== bScore) return bScore - aScore;
     return a.resolutionOriginalIndex - b.resolutionOriginalIndex;
   });
@@ -104,14 +117,12 @@ function padResolveChordCandidateList(midiNotes, rawCandidates) {
   if (candidates.length === 0) return [];
 
   var rankGroup = 0;
-  var previousCompleteness = null;
   var previousScore = null;
   for (var ci = 0; ci < candidates.length; ci++) {
     var current = candidates[ci];
-    var currentScore = Number(current.score) || 0;
-    if (current.resolutionCompleteness !== previousCompleteness || currentScore !== previousScore) {
+    var currentScore = Number(current.resolutionScore) || 0;
+    if (previousScore === null || currentScore !== previousScore) {
       rankGroup++;
-      previousCompleteness = current.resolutionCompleteness;
       previousScore = currentScore;
     }
     current.resolutionRankGroup = rankGroup;
