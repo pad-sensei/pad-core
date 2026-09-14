@@ -128,14 +128,10 @@ function padResolveChordCandidateList(midiNotes, rawCandidates) {
 }
 
 function padResolveChordCandidates(midiNotes, spellingKey) {
-  var detector = typeof padDetectChord === 'function' ? padDetectChord : null;
-  if (!detector && typeof require !== 'undefined') {
-    detector = require('./theory.js').padDetectChord;
-  }
-  if (typeof detector !== 'function') {
+  if (typeof padDetectChord !== 'function') {
     throw new Error('pad-core chord resolver prerequisite missing: padDetectChord');
   }
-  return padResolveChordCandidateList(midiNotes, detector(midiNotes, spellingKey));
+  return padResolveChordCandidateList(midiNotes, padDetectChord(midiNotes, spellingKey));
 }
 
 if (typeof globalThis !== 'undefined') {
