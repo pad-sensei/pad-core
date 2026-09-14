@@ -22,7 +22,7 @@ describe('v1.8.1 chord resolution completeness', () => {
     expect(resolved.some(candidate => candidate.name === 'Edim')).toBe(false);
   });
 
-  it('resolves E G B C as CMaj7/E and removes the partial Em(b6) user-facing reading', () => {
+  it('resolves E G B C as CMaj7/E while keeping Em(b6) only as a lower color reading', () => {
     const notes = [64, 67, 71, 72];
     const raw = padDetectChord(notes);
     expect(raw.some(candidate => candidate.name === 'Em(b6)')).toBe(true);
@@ -30,7 +30,11 @@ describe('v1.8.1 chord resolution completeness', () => {
     const resolved = padResolveChordCandidates(notes);
     expect(resolved[0].name).toBe('CMaj7 / E');
     expect(resolved[0].resolutionCompleteness).toBe('exact');
-    expect(resolved.some(candidate => candidate.name === 'Em(b6)')).toBe(false);
+    const lower = resolved.find(candidate => candidate.name === 'Em(b6)');
+    expect(lower).toBeDefined();
+    expect(lower.isTopRanked).toBe(false);
+    expect(lower.resolutionSubsetPenalty).toBe(200);
+    expect(lower.resolutionScore).toBeLessThan(resolved[0].resolutionScore);
   });
 
   it('keeps dominant seventh inversions complete across every transposition and inversion', () => {
@@ -75,12 +79,22 @@ describe('v1.8.1 chord resolution completeness', () => {
     expect(resolved.some(candidate => candidate.rootPC === 2 && candidate.quality === 'm6' && candidate.resolutionCompleteness === 'exact')).toBe(true);
   });
 
+  it('retains Dm(b6) below the complete BbMaj7/D reading', () => {
+    const notes = [62, 65, 69, 70]; // D F A Bb
+    const resolved = padResolveChordCandidates(notes, 10);
+    expect(resolved[0].name).toBe('BbMaj7 / D');
+    const lower = resolved.find(candidate => candidate.name === 'Dm(b6)');
+    expect(lower).toBeDefined();
+    expect(lower.isTopRanked).toBe(false);
+    expect(lower.resolutionSubsetPenalty).toBe(200);
+  });
+
   it('marks equal-score exact alternatives as one tied top group', () => {
     const notes = [60, 64, 67, 69];
     const fake = [
       { name: 'C6', rootPC: 0, score: 120, quality: '6', chordPCS: [0, 4, 7, 9] },
       { name: 'Am7 / C', rootPC: 9, score: 120, quality: 'm7', chordPCS: [0, 3, 7, 10] },
-      { name: 'C', rootPC: 0, score: 125, quality: 'Maj', chordPCS: [0, 4, 7] },
+      { name: 'Cdim', rootPC: 0, score: 125, quality: 'dim', chordPCS: [0, 3, 6] },
     ];
     const resolved = padResolveChordCandidateList(notes, fake);
     expect(resolved).toHaveLength(2);
