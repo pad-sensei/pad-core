@@ -23,6 +23,18 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Diagnostic candidate scores
+        run: |
+          node <<'NODE'
+          Object.assign(globalThis, require('./data.js'));
+          Object.assign(globalThis, require('./theory.js'));
+          Object.assign(globalThis, require('./chord-resolver.js'));
+          for (const notes of [[34,44,50,54,59], [34,44,50,54]]) {
+            console.log('NOTES', notes);
+            console.log('RAW', padDetectChord(notes, 10).map(c => ({name:c.name, score:c.score, quality:c.quality, chordPCS:c.chordPCS})));
+            console.log('RESOLVED', padResolveChordCandidates(notes, 10).map(c => ({name:c.name, score:c.score, resolutionScore:c.resolutionScore, quality:c.quality, completeness:c.resolutionCompleteness, chordPCS:c.chordPCS, unexplained:c.resolutionUnexplainedPCS, unplayed:c.resolutionUnplayedPCS})));
+          }
+          NODE
       - name: Focused regression
         run: npx vitest run tests/altered-dominant-resolution.test.js
       - name: Full suite
