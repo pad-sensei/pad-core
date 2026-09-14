@@ -29,6 +29,9 @@ Object.assign(globalThis, data);
 const theory = require('../../theory.js');
 Object.assign(globalThis, theory);
 
+const chordResolver = require('../../chord-resolver.js');
+Object.assign(globalThis, chordResolver);
+
 const render = require('../../render.js');
 Object.assign(globalThis, render);
 
