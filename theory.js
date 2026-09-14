@@ -2046,8 +2046,17 @@ function padDetectChord(midiNotes, spellingKey) {
     details = details || padSimpleDetectDetails('unknown', []);
     for (var ci = 0; ci < candidates.length; ci++) {
       if (candidates[ci].name === name) {
-        candidates[ci].score = Math.max(candidates[ci].score || 0, score);
-        if (details) Object.assign(candidates[ci], details);
+        var previousScore = candidates[ci].score || 0;
+        var previousTensions = Array.isArray(candidates[ci].tensionLabels) ? candidates[ci].tensionLabels.length : 0;
+        var incomingTensions = details && Array.isArray(details.tensionLabels) ? details.tensionLabels.length : 0;
+        // A display-derived pc8 role can create the same canonical name before
+        // the richer registered b13 entry is visited. Keep the highest-scoring
+        // structural realization, and on a tie prefer metadata that actually
+        // carries the named tensions. This makes PushOrBump live up to its name.
+        if (score > previousScore || (score === previousScore && incomingTensions > previousTensions)) {
+          candidates[ci].score = score;
+          if (details) Object.assign(candidates[ci], details);
+        }
         return;
       }
     }
@@ -2103,7 +2112,7 @@ function padDetectChord(midiNotes, spellingKey) {
           var bass = lowestPC !== rootPC ? ' / ' + padChordIntervalNoteName(rootPC, lowestPC) : '';
           var displayQuality = padAppendDetectedPc8Role(chord.name, chord.pcs, intervals);
           var name = rootName + displayQuality + bass;
-          if (!seenNames[name]) padPushOrBumpCandidate(name, rootPC, score, padDetectDetails(chord));
+          padPushOrBumpCandidate(name, rootPC, score, padDetectDetails(chord));
         }
       }
       // Omit5 match: 4+ note chords containing 5th (7) — also check without 5th
@@ -2134,7 +2143,7 @@ function padDetectChord(midiNotes, spellingKey) {
             var omitLabel = (chord.pcs.length >= 5 || hasShell) ? '' : '(omit5)';
             var displayQuality = padAppendDetectedPc8Role(chord.name, chord.pcs, intervals);
             var name = rootName + displayQuality + omitLabel + bass;
-            if (!seenNames[name]) padPushOrBumpCandidate(name, rootPC, score, padDetectDetails(chord));
+            padPushOrBumpCandidate(name, rootPC, score, padDetectDetails(chord));
           }
         }
       }

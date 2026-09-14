@@ -31,6 +31,8 @@ describe('v1.8.1 altered-dominant resolution', () => {
     expect(resolved[0].name).toBe('Bb7(b13)');
     expect(resolved[0].rootPC).toBe(10);
     expect(resolved[0].isTopRanked).toBe(true);
+    expect(resolved[0].quality).toBe('7');
+    expect(resolved[0].tensionLabels).toContain('b13');
   });
 
   it('keeps the winning altered dominant structured as a dominant-7 context for UST consumers', () => {
