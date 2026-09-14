@@ -2,7 +2,7 @@
 // PAD-CORE — Minimal semantic public API v0
 //
 // Compatibility adapter only. Musical semantics remain in data.js, theory.js,
-// chord-resolver.js, and observed-structure.js. Load this after those classic scripts.
+// and observed-structure.js. Load this after those classic scripts.
 // ========================================
 
 function padRequireSemanticFunction(name, value) {
@@ -18,13 +18,7 @@ function padCreateSemanticApi() {
     pitchClass: padRequireSemanticFunction('padPitchClass', typeof padPitchClass !== 'undefined' ? padPitchClass : null),
     pcName: padRequireSemanticFunction('padPcName', typeof padPcName !== 'undefined' ? padPcName : null),
     parseChord: padRequireSemanticFunction('padParseChordName', typeof padParseChordName !== 'undefined' ? padParseChordName : null),
-    // Exhaustive transparent detector. Consumers that need one user-facing
-    // judgment should use resolveChordCandidates instead.
     detectChord: padRequireSemanticFunction('padDetectChord', typeof padDetectChord !== 'undefined' ? padDetectChord : null),
-    resolveChordCandidates: padRequireSemanticFunction(
-      'padResolveChordCandidates',
-      typeof padResolveChordCandidates !== 'undefined' ? padResolveChordCandidates : null
-    ),
     applyTension: padRequireSemanticFunction('padApplyTension', typeof padApplyTension !== 'undefined' ? padApplyTension : null),
     findParentScales: padRequireSemanticFunction('padFindParentScales', typeof padFindParentScales !== 'undefined' ? padFindParentScales : null),
     dim7AvailableTensionPCs: padRequireSemanticFunction(
