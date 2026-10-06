@@ -122,9 +122,38 @@ describe('padChooseNearestPositions: rule order', () => {
     expect(r.metrics.distance).toBe(2);
   });
 
-  it('rule 3: ties on movement fall to the smaller bounding rectangle', () => {
-    // Two pads for pitch 54 and for 67: both choices cost the same movement
-    // from this origin, so the more compact set wins (and tieCount counts equals).
+  it('rule 3: with equal movement, the smaller longer side (maxDim) wins', () => {
+    // Movement ties at 6 between a 2x3 form (maxDim 3, area 6) and a form with maxDim 8.
+    const prev = B([[65, 80], [56, 68], [57, 69]]);
+    const r = padChooseNearestPositions(prev, [61, 63, 68]);
+    expect(serialsOf(r)).toEqual([76, 78, 86]);
+    expect(r.metrics.distance).toBe(6);
+    expect(r.metrics.area).toBe(6);
+    expect(r.metrics.tieCount).toBe(1);
+  });
+
+  it('rule 3: with equal movement and equal maxDim, the smaller area wins', () => {
+    // Three forms tie at distance 11: (maxDim 6, area 30), (7, 35), (6, 24).
+    const prev = B([[62, 77], [58, 70], [42, 42]]);
+    const r = padChooseNearestPositions(prev, [49, 66, 72]);
+    expect(serialsOf(r)).toEqual([55, 84, 93]);
+    expect(r.metrics.distance).toBe(11);
+    expect(r.metrics.area).toBe(24);
+  });
+
+  it('rule 3: maxDim is compared before area (reviewer case)', () => {
+    // maxDim first -> [52,81,88,93] (6x6, area 36); area first would pick [49,81,88,93] (7x5, area 35).
+    const prev = B([[70, 88], [66, 81], [68, 86], [75, 96]]);
+    const r = padChooseNearestPositions(prev, [46, 66, 70, 72]);
+    expect(serialsOf(r)).toEqual([52, 81, 88, 93]);
+    expect(r.metrics.rowSpan).toBe(6);
+    expect(r.metrics.colSpan).toBe(6);
+    expect(r.metrics.area).toBe(36);
+    expect(r.metrics.tieCount).toBe(1);
+  });
+
+  it('rule 4: a complete tie is broken by ascending serial', () => {
+    // Pitch 54 / 67 from this origin: two forms tie on every rule above.
     const prev = B([[64, 79], [36, 36]]);
     const r = padChooseNearestPositions(prev, [54, 67]);
     expect(r.ok).toBe(true);
@@ -138,6 +167,23 @@ describe('padChooseNearestPositions: rule order', () => {
     const b = padChooseNearestPositions(prev, [67, 54]);
     expect(serialsOf(a)).toEqual(serialsOf(b));
     expect(serialsOf(a)).toEqual([63, 82]);
+  });
+});
+
+describe('layout is fixed and range-checked', () => {
+  it('padRowColToSerial returns null outside the board', () => {
+    expect(padRowColToSerial(-1, 0)).toBeNull();
+    expect(padRowColToSerial(8, 0)).toBeNull();
+    expect(padRowColToSerial(0, 8)).toBeNull();
+    expect(padRowColToSerial(0.5, 0)).toBeNull();
+    expect(padRowColToSerial(7, 7)).toBe(99);
+  });
+
+  it('options.layout cannot replace the board', () => {
+    const fake = { layout: { rows: 4, cols: 16, serialBase: 0, baseMidi: 0 } };
+    expect(padNearestLayout(fake)).toEqual(padNearestLayout());
+    expect(padSerialToRowCol(99, fake)).toEqual({ row: 7, col: 7 });
+    expect(padChooseNearestPositions(CM7_SEED, FM7_PITCHES, fake)).toEqual(padChooseNearestPositions(CM7_SEED, FM7_PITCHES));
   });
 });
 
@@ -212,6 +258,33 @@ describe('padChooseNearestPositions: cannot-place and invalid input', () => {
     for (let p = 40; p < 52; p++) many.push(p);
     expect(padChooseNearestPositions(CM7_SEED, many).reason).toBe('too_many_pitches');
   });
+
+  it('applies the same cap to the previous chord (prev), so the matching cannot overflow', () => {
+    const prev = [];
+    for (let p = 40; p < 56; p++) {
+      for (let row = 0; row < 8; row++) {
+        const col = p - 36 - 5 * row;
+        if (col >= 0 && col < 8) { prev.push({ pitch: p, serial: padRowColToSerial(row, col) }); break; }
+      }
+    }
+    expect(prev.length).toBeGreaterThan(10);
+    const r = padChooseNearestPositions(prev, [60]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('too_many_pitches');
+    expect(r.bindings).toEqual([]);
+  });
+
+  it('a prev of exactly the maximum size still resolves', () => {
+    const prev = [];
+    for (let p = 40; p < 50; p++) {
+      for (let row = 0; row < 8; row++) {
+        const col = p - 36 - 5 * row;
+        if (col >= 0 && col < 8) { prev.push({ pitch: p, serial: padRowColToSerial(row, col) }); break; }
+      }
+    }
+    expect(prev).toHaveLength(10);
+    expect(padChooseNearestPositions(prev, [60, 63]).ok).toBe(true);
+  });
 });
 
 describe('padChooseNearestPositions: unequal note counts (open question)', () => {
@@ -261,6 +334,21 @@ describe('padResolveNearestSequence: seed and override', () => {
     const back = r.results[3];
     expect(back.source).toBe('nearest');
     expect(serialsOf(back)).toEqual(serialsOf(padChooseNearestPositions(r.results[2].bindings, [60, 63, 67, 70])));
+  });
+
+  it('the cap also applies to a seed / override (explicit)', () => {
+    const pitches = [];
+    const explicit = [];
+    for (let p = 40; p < 52; p++) {
+      for (let row = 0; row < 8; row++) {
+        const col = p - 36 - 5 * row;
+        if (col >= 0 && col < 8) { pitches.push(p); explicit.push({ pitch: p, serial: padRowColToSerial(row, col) }); break; }
+      }
+    }
+    const r = padResolveNearestSequence([{ pitches, explicit }]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('too_many_pitches');
+    expect(r.failedAt).toBe(0);
   });
 
   it('requires a seed on the first step', () => {

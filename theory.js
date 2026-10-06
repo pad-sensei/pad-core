@@ -475,29 +475,29 @@ function padFindCompactPositions(midiNotes, gridRows, gridCols, bm, rowInterval,
 //   2. smallest total hand movement: minimum-cost one-to-one matching between
 //      previous pads and next pads, cost = |drow| + |dcol| (board distance;
 //      never semitone or serial difference)
-//   3. smallest bounding rectangle (area, then longer side)
+//   3. most compact bounding rectangle: longer side (maxDim) first, then area
+//      (same order as padFindCompactPositions / padCalcAllVoicingPositions)
 //   4. deterministic: serials ascending in pitch order
 
 var PAD_NEAREST_MAX_PITCHES = 10;
 
 /**
- * Resolve the board layout. Defaults to push-fourths-chromatic-v1 built from
- * the existing GRID constants (8x8, base MIDI 36, +5 per row, +1 per column,
- * serial = 36 + row*8 + col). serialBase is the serial of row 0 / col 0.
+ * The board layout: push-fourths-chromatic-v1, fixed from the existing GRID
+ * constants (8x8, base MIDI 36, +5 per row, +1 per column,
+ * serial = 36 + row*8 + col). The layout cannot be replaced through options.
  * options.octaveShift moves only the pitch base (by 12 per step); serials
  * do not change.
  */
 function padNearestLayout(options) {
   var g = (typeof GRID !== 'undefined') ? GRID : null;
-  var l = (options && options.layout) || {};
   var shift = options && options.octaveShift !== undefined ? options.octaveShift : 0;
   return {
-    rows: l.rows !== undefined ? l.rows : (g ? g.ROWS : 8),
-    cols: l.cols !== undefined ? l.cols : (g ? g.COLS : 8),
-    baseMidi: (l.baseMidi !== undefined ? l.baseMidi : (g ? g.BASE_MIDI : 36)) + 12 * shift,
-    rowInterval: l.rowInterval !== undefined ? l.rowInterval : (g ? g.ROW_INTERVAL : 5),
-    colInterval: l.colInterval !== undefined ? l.colInterval : (g ? g.COL_INTERVAL : 1),
-    serialBase: l.serialBase !== undefined ? l.serialBase : 36,
+    rows: g ? g.ROWS : 8,
+    cols: g ? g.COLS : 8,
+    baseMidi: (g ? g.BASE_MIDI : 36) + 12 * shift,
+    rowInterval: g ? g.ROW_INTERVAL : 5,
+    colInterval: g ? g.COL_INTERVAL : 1,
+    serialBase: 36,
   };
 }
 
@@ -509,8 +509,11 @@ function padSerialToRowCol(serial, options) {
   return { row: Math.floor(idx / L.cols), col: idx % L.cols };
 }
 
+// Returns null when (row, col) is not a pad on the board.
 function padRowColToSerial(row, col, options) {
   var L = padNearestLayout(options);
+  if (typeof row !== 'number' || typeof col !== 'number' || row % 1 !== 0 || col % 1 !== 0) return null;
+  if (row < 0 || row >= L.rows || col < 0 || col >= L.cols) return null;
   return L.serialBase + row * L.cols + col;
 }
 
@@ -586,7 +589,10 @@ function _padNearestCheckBindings(list, options) {
     out.push({ pitch: pitch, serial: b.serial, row: pos.row, col: pos.col });
   }
   out.sort(function(x, y) { return x.pitch - y.pitch; });
-  return bad.length ? { ok: false, bad: bad } : { ok: true, bindings: out };
+  if (bad.length) return { ok: false, bad: bad };
+  // The matching below is exponential in the pad count; cap it on both sides.
+  if (out.length > PAD_NEAREST_MAX_PITCHES) return { ok: false, tooMany: true };
+  return { ok: true, bindings: out };
 }
 
 function _padNearestUniquePitches(pitches) {
@@ -612,7 +618,8 @@ function _padNearestUniquePitches(pitches) {
  *   'no_origin' (prev empty / missing: a seed is required),
  *   'invalid_origin' (prev serial out of range or not producing that pitch; `bad`),
  *   'invalid_pitch' (non-integer pitch), 'empty_pitches',
- *   'too_many_pitches', 'unplaceable' (`unplaceablePitches`: no pad plays them).
+ *   'too_many_pitches' (more than PAD_NEAREST_MAX_PITCHES pads in prev or next),
+ *   'unplaceable' (`unplaceablePitches`: no pad plays them).
  * No pitch is ever dropped silently.
  *
  * Duplicate pitches in `nextPitches` collapse to one pad (a pad plays a pitch
@@ -624,7 +631,7 @@ function padChooseNearestPositions(prev, nextPitches, options) {
   var L = padNearestLayout(options);
   if (!prev || prev.length === 0) return _padNearestFail('no_origin');
   var origin = _padNearestCheckBindings(prev, options);
-  if (!origin.ok) return _padNearestFail('invalid_origin', { bad: origin.bad });
+  if (!origin.ok) return origin.tooMany ? _padNearestFail('too_many_pitches') : _padNearestFail('invalid_origin', { bad: origin.bad });
   var pitches = _padNearestUniquePitches(nextPitches || []);
   if (pitches === null) return _padNearestFail('invalid_pitch');
   if (pitches.length === 0) return _padNearestFail('empty_pitches');
@@ -643,7 +650,7 @@ function padChooseNearestPositions(prev, nextPitches, options) {
   var chosen = [];
 
   function cmpKey(a, b) {
-    return a.moved - b.moved || a.distance - b.distance || a.area - b.area || a.maxDim - b.maxDim;
+    return a.moved - b.moved || a.distance - b.distance || a.maxDim - b.maxDim || a.area - b.area;
   }
   function cmpSerials(a, b) {
     for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i];
@@ -728,7 +735,7 @@ function padResolveNearestSequence(steps, options) {
       var pitches = _padNearestUniquePitches(step.pitches || []);
       var chk = _padNearestCheckBindings(step.explicit, options);
       if (pitches === null) res = _padNearestFail('invalid_pitch');
-      else if (!chk.ok) res = _padNearestFail('invalid_explicit', { bad: chk.bad });
+      else if (!chk.ok) res = chk.tooMany ? _padNearestFail('too_many_pitches') : _padNearestFail('invalid_explicit', { bad: chk.bad });
       else {
         var got = chk.bindings.map(function(b) { return b.pitch; });
         if (pitches.length === 0) res = _padNearestFail('empty_pitches');
