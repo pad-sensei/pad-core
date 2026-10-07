@@ -758,6 +758,268 @@ function padResolveNearestSequence(steps, options) {
   return { ok: true, results: results };
 }
 
+// ======== 押さえ方 第2版（任意に利用するAPI、PR27は互換維持） ========
+
+function _padPositionConfig(options) {
+  var base = PAD_POSITION_MODEL_V2;
+  if (options && options.model !== undefined && (!options.model || typeof options.model !== 'object' || Array.isArray(options.model))) return null;
+  var override = options && options.model || {};
+  var model = {
+    version: override.version || base.version,
+    limits: Object.assign({}, base.limits, override.limits),
+    weights: Object.assign({}, base.weights, override.weights),
+    referenceBpm: override.referenceBpm === undefined ? base.referenceBpm : override.referenceBpm,
+    forms: override.forms === undefined ? base.forms : override.forms,
+  };
+  if (typeof model.version !== 'string' || !model.version) return null;
+  var bpm = options && options.bpm !== undefined ? options.bpm : model.referenceBpm;
+  var shift = options && options.octaveShift !== undefined ? options.octaveShift : 0;
+  function positive(n) { return typeof n === 'number' && Number.isFinite(n) && n > 0; }
+  if (!positive(bpm) || !positive(model.referenceBpm) || !Number.isInteger(shift) ||
+      !positive(model.limits.maxHandDistance) || !model.forms || typeof model.forms !== 'object') return null;
+  for (var key of ['maxSteps', 'maxCandidates']) {
+    if (!Number.isInteger(model.limits[key]) || model.limits[key] < 1 || model.limits[key] > base.limits[key]) return null;
+  }
+  for (var weight of Object.keys(model.weights)) {
+    if (typeof model.weights[weight] !== 'number' || !Number.isFinite(model.weights[weight]) || model.weights[weight] < 0) return null;
+  }
+  var factor = Math.pow(bpm / model.referenceBpm, 2);
+  if (!Number.isFinite(factor * model.weights.movement)) return null;
+  for (var quality of Object.keys(model.forms)) {
+    var forms = model.forms[quality], ids = new Set();
+    if (!Array.isArray(forms) || forms.length === 0 || forms.length > base.limits.maxCandidates) return null;
+    for (var form of forms) {
+      if (!form || typeof form.id !== 'string' || !form.id || ids.has(form.id) ||
+          !Array.isArray(form.left) || !Array.isArray(form.right) || !form.left.length || !form.right.length ||
+          typeof form.usageCost !== 'number' || !Number.isFinite(form.usageCost) || form.usageCost < 0) return null;
+      ids.add(form.id);
+      var degrees = form.left.concat(form.right);
+      if (degrees.length > PAD_NEAREST_MAX_PITCHES || new Set(degrees).size !== degrees.length ||
+          !degrees.includes(0) || degrees.some(function(d) { return !Number.isInteger(d) || d < 0 || d > 11; })) return null;
+    }
+  }
+  return { model: model, bpm: bpm, movementWeight: model.weights.movement * factor };
+}
+
+function _padPositionHandSpan(hand) {
+  var span = 0;
+  for (var i = 0; i < hand.length; i++) {
+    for (var j = i + 1; j < hand.length; j++) {
+      span = Math.max(span, Math.abs(hand[i].row - hand[j].row) + Math.abs(hand[i].col - hand[j].col));
+    }
+  }
+  return span;
+}
+
+function _padPositionCandidate(bindings, root, form, cfg, fixed) {
+  var degrees = {};
+  bindings.forEach(function(b) { degrees[((b.pitch - root) % 12 + 12) % 12] = b; });
+  var hands = {};
+  ['left', 'right'].forEach(function(hand) {
+    hands[hand] = form[hand].slice().sort(function(a, b) { return a - b; }).map(function(d) {
+      return Object.assign({ degree: d }, degrees[d]);
+    });
+  });
+  var leftSpan = _padPositionHandSpan(hands.left), rightSpan = _padPositionHandSpan(hands.right);
+  var unreachable = Math.max(leftSpan, rightSpan) > cfg.model.limits.maxHandDistance;
+  if (unreachable && !fixed) return null;
+  var balance = Math.abs(hands.left.length - hands.right.length);
+  var weights = cfg.model.weights;
+  var costs = {
+    fingerDistance: weights.fingerDistance * (leftSpan + rightSpan),
+    balance: weights.balance * balance,
+    usage: weights.usage * form.usageCost,
+  };
+  var cost = fixed ? 0 : costs.fingerDistance + costs.balance + costs.usage;
+  if (!Number.isFinite(cost)) return null;
+  return {
+    ok: true, bindings: bindings, formId: form.id,
+    internal: { hands: hands, reason: form.reason || '', fixed: fixed },
+    metrics: { leftSpan: leftSpan, rightSpan: rightSpan, balance: balance,
+      exceedsReach: unreachable, costs: costs, intrinsicCost: cost },
+  };
+}
+
+/**
+ * step={root: pitch class 0..11, quality:'m7'|'dom7'|手本で追加した質,
+ *       pitches:[実MIDI], explicit?:[{pitch,serial}], formId?:内部のフォーム指定}。
+ * options={octaveShift?, bpm?, model?:{version?,weights?,limits?,referenceBpm?,forms?}}。
+ * 既定はm7の2つとdom7の右R+b7。指の推定・UI表示は行わない。
+ * 同じ度数の重複オクターブ・shell・未登録の質は黙って一般形へ逃げない。
+ * explicitは固定。未指定のformIdはその質の最初の手本を使う。
+ * 指間距離を超えるexplicitも動かさず、metrics.exceedsReachで伝える。
+ */
+function padEnumPerformancePositions(step, options) {
+  var cfg = _padPositionConfig(options);
+  if (!cfg) return _padNearestFail('invalid_model');
+  if (!step || !Number.isInteger(step.root) || step.root < 0 || step.root > 11 || typeof step.quality !== 'string') {
+    return _padNearestFail('harmony_required');
+  }
+  var allForms = Object.prototype.hasOwnProperty.call(cfg.model.forms, step.quality) ? cfg.model.forms[step.quality] : null;
+  if (!allForms) return _padNearestFail('unsupported_quality');
+  if (step.pitches !== undefined && !Array.isArray(step.pitches)) return _padNearestFail('invalid_pitch');
+  var pitches = _padNearestUniquePitches(step.pitches || []);
+  if (pitches === null) return _padNearestFail('invalid_pitch');
+  if (!pitches.length) return _padNearestFail('empty_pitches');
+  if (pitches.length > PAD_NEAREST_MAX_PITCHES) return _padNearestFail('too_many_pitches');
+  var degrees = pitches.map(function(p) { return ((p - step.root) % 12 + 12) % 12; }).sort(function(a, b) { return a - b; });
+  var forms = allForms.filter(function(f) {
+    var expected = f.left.concat(f.right).sort(function(a, b) { return a - b; });
+    return expected.length === degrees.length && expected.every(function(d, i) { return d === degrees[i]; });
+  });
+  if (!forms.length) return _padNearestFail('unsupported_voicing');
+  if (step.formId !== undefined) {
+    forms = forms.filter(function(f) { return f.id === step.formId; });
+    if (!forms.length) return _padNearestFail('unknown_form');
+  }
+  var fixed = step.explicit !== undefined;
+  var pools, explicit;
+  if (fixed) {
+    if (!Array.isArray(step.explicit)) return _padNearestFail('invalid_explicit');
+    var checked = _padNearestCheckBindings(step.explicit, options);
+    if (!checked.ok) return checked.tooMany ? _padNearestFail('too_many_pitches') : _padNearestFail('invalid_explicit', { bad: checked.bad });
+    explicit = checked.bindings;
+    if (explicit.length !== pitches.length || explicit.some(function(b, i) { return b.pitch !== pitches[i]; })) {
+      return _padNearestFail('explicit_pitch_mismatch');
+    }
+    forms = [forms[0]];
+    pools = explicit.map(function(b) { return [b]; });
+  } else {
+    var layout = padNearestLayout(options);
+    pools = pitches.map(function(p) {
+      return _padNearestPadsForPitch(p, layout).map(function(pad) {
+        return { pitch: p, serial: padRowColToSerial(pad.row, pad.col), row: pad.row, col: pad.col };
+      });
+    });
+    var missing = pitches.filter(function(p, i) { return !pools[i].length; });
+    if (missing.length) return _padNearestFail('unplaceable', { unplaceablePitches: missing });
+  }
+  // 上限で候補を切り捨てて最適と称さず、探索自体を明示的に止める。
+  var count = pools.reduce(function(n, pool) { return n * pool.length; }, forms.length);
+  if (count > cfg.model.limits.maxCandidates) return _padNearestFail('too_many_candidates');
+  var candidates = [], chosen = [], rejected = 0;
+  function walk(index) {
+    if (index === pools.length) {
+      forms.forEach(function(form) {
+        var candidate = _padPositionCandidate(chosen.slice(), step.root, form, cfg, fixed);
+        if (candidate) candidates.push(candidate); else rejected++;
+      });
+      return;
+    }
+    pools[index].forEach(function(b) { chosen.push(b); walk(index + 1); chosen.pop(); });
+  }
+  walk(0);
+  candidates.sort(function(a, b) {
+    for (var i = 0; i < a.bindings.length; i++) {
+      if (a.bindings[i].serial !== b.bindings[i].serial) return a.bindings[i].serial - b.bindings[i].serial;
+    }
+    return a.formId < b.formId ? -1 : a.formId > b.formId ? 1 : 0;
+  });
+  if (!candidates.length) return _padNearestFail('no_playable_form', { rejectedByReach: rejected });
+  return { ok: true, candidates: candidates, rejectedByReach: rejected };
+}
+
+// 同じ度数の位置差が全て一致する時だけ厳密な平行移動。
+function _padPositionParallel(a, b) {
+  if (a.formId !== b.formId) return false;
+  var dr = null, dc = null;
+  for (var hand of ['left', 'right']) {
+    var prev = a.internal.hands[hand], next = b.internal.hands[hand];
+    if (prev.length !== next.length) return false;
+    for (var i = 0; i < prev.length; i++) {
+      if (prev[i].degree !== next[i].degree) return false;
+      var r = next[i].row - prev[i].row, c = next[i].col - prev[i].col;
+      if (dr === null) { dr = r; dc = c; }
+      if (r !== dr || c !== dc) return false;
+    }
+  }
+  return true;
+}
+
+function _padPositionTransition(a, b, cfg) {
+  var movement = 0;
+  // 左右を混ぜた最適対応にせず、各手の最適対応を別々に求める。
+  for (var hand of ['left', 'right']) movement += _padMinManhattanMatching(a.internal.hands[hand], b.internal.hands[hand]);
+  var prev = {};
+  a.bindings.forEach(function(p) { prev[p.pitch] = p.serial; });
+  var movedCommon = b.bindings.filter(function(p) { return prev[p.pitch] !== undefined && prev[p.pitch] !== p.serial; }).length;
+  var switched = a.formId !== b.formId;
+  var parallel = _padPositionParallel(a, b);
+  var costs = {
+    movement: movement * cfg.movementWeight,
+    movedCommon: movedCommon * cfg.model.weights.movedCommon,
+    formSwitch: switched ? cfg.model.weights.formSwitch : 0,
+    shapeChange: !switched && !parallel ? cfg.model.weights.shapeChange : 0,
+  };
+  return { movement: movement, movedCommon: movedCommon, switched: switched, parallel: parallel,
+    costs: costs, cost: costs.movement + costs.movedCommon + costs.formSwitch + costs.shapeChange };
+}
+
+/**
+ * 進行全体の動的計画法。候補・形は各stepの実音高を変えない。
+ * options.constantStructure=[{from,to}]（両端を含むindex）。自動で区間を作らない。
+ * 指定区間内の隣接stepは同じフォームの厳密な平行移動に制限する。
+ * seed/overrideとの衝突はstyle_conflict。届かない形を様式で復活させない。
+ * PR27のpadResolveNearestSequenceとは別API。最初の失敗で止め、後ろは返さない。
+ */
+function padResolvePerformanceSequence(steps, options) {
+  var cfg = _padPositionConfig(options);
+  if (!cfg) return { ok: false, results: [], reason: 'invalid_model' };
+  if (!Array.isArray(steps)) return { ok: false, results: [], reason: 'invalid_steps' };
+  if (steps.length > cfg.model.limits.maxSteps) return { ok: false, results: [], reason: 'too_many_steps' };
+  var ranges = options && options.constantStructure !== undefined ? options.constantStructure : [];
+  if (!Array.isArray(ranges) || ranges.some(function(r) {
+    return !r || !Number.isInteger(r.from) || !Number.isInteger(r.to) || r.from < 0 || r.to >= steps.length || r.from >= r.to;
+  })) return { ok: false, results: [], reason: 'invalid_style' };
+  if (!steps.length) return { ok: true, results: [], totalCost: 0 };
+  var layers = [];
+  function recover() {
+    if (!layers.length) return [];
+    var layer = layers[layers.length - 1], best = 0;
+    for (var j = 1; j < layer.length; j++) if (layer[j].cost < layer[best].cost) best = j;
+    var results = [];
+    for (var index = layers.length - 1; index >= 0; index--) {
+      var state = layers[index][best], candidate = state.candidate;
+      results.unshift({ index: index, ok: true,
+        source: steps[index].explicit !== undefined ? (index === 0 ? 'seed' : 'override') : 'performance',
+        bindings: candidate.bindings, formId: candidate.formId, internal: candidate.internal,
+        metrics: Object.assign({}, candidate.metrics, { transition: state.transition, cumulativeCost: state.cost }),
+      });
+      best = state.prev;
+    }
+    return results;
+  }
+  function fail(index, res) {
+    var results = recover();
+    results.push(Object.assign({ index: index }, res));
+    return { ok: false, results: results, failedAt: index, reason: res.reason };
+  }
+  for (var i = 0; i < steps.length; i++) {
+    if (i === 0 && (!steps[i] || steps[i].explicit === undefined)) return fail(i, _padNearestFail('seed_required'));
+    var enumeration = padEnumPerformancePositions(steps[i], options);
+    if (!enumeration.ok) return fail(i, enumeration);
+    var strict = ranges.some(function(r) { return r.from < i && i <= r.to; });
+    var nextLayer = [];
+    for (var candidate of enumeration.candidates) {
+      if (i === 0) { nextLayer.push({ candidate: candidate, cost: 0, prev: -1, transition: null }); continue; }
+      var bestCost = Infinity, bestPrev = -1, bestTransition = null;
+      for (var j = 0; j < layers[i - 1].length; j++) {
+        var state = layers[i - 1][j];
+        if (strict && !_padPositionParallel(state.candidate, candidate)) continue;
+        var transition = _padPositionTransition(state.candidate, candidate, cfg);
+        var cost = state.cost + transition.cost + candidate.metrics.intrinsicCost;
+        if (Number.isFinite(cost) && cost < bestCost) { bestCost = cost; bestPrev = j; bestTransition = transition; }
+      }
+      if (bestPrev !== -1) nextLayer.push({ candidate: candidate, cost: bestCost, prev: bestPrev, transition: bestTransition });
+    }
+    if (!nextLayer.length) return fail(i, _padNearestFail(strict ? 'style_conflict' : 'cost_overflow'));
+    layers.push(nextLayer);
+  }
+  var results = recover();
+  return { ok: true, results: results, totalCost: results[results.length - 1].metrics.cumulativeCost,
+    modelVersion: cfg.model.version, bpm: cfg.bpm };
+}
+
 // ======== CHORD CONTEXT KEY ========
 
 function padChordContextKey(root, scaleIdx, key) {
@@ -2720,6 +2982,7 @@ if (typeof module !== 'undefined') module.exports = {
   padGetShellIntervals, padCalcAllVoicingPositions, padFindCompactPositions,
   padNearestLayout, padSerialToRowCol, padRowColToSerial, padPitchAtSerial,
   padChooseNearestPositions, padResolveNearestSequence,
+  padEnumPerformancePositions, padResolvePerformanceSequence,
   padChordContextKey, padGetBuilderChordName,
   padGetDiatonicTetrads, padFindParentScales,
   padEnumGuitarChordForms, padAnalyzeGuitarFormQuality,

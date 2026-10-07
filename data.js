@@ -1321,6 +1321,44 @@ function padInstallGuitarSourcePatternSeeds() {
 
 padInstallGuitarSourcePatternSeeds();
 
+// 押さえ方v2。数値は原文の測定値ではなく、手本で調整する初期仮説。
+// 距離単位: 盤面マンハッタン距離。手・度数は内部情報で表示しない。
+var PAD_POSITION_MODEL_V2 = {
+  version: 'performance-v2',
+  limits: { maxHandDistance: 4, maxSteps: 512, maxCandidates: 128 },
+  referenceBpm: 120,
+  weights: {
+    fingerDistance: 1, // #14 6031949062「指の距離だね。」
+    balance: 2, // 6031946064「両手で出来るだけ均等に」
+    movement: 1, // 6031922816「次のコードと移動量」
+    formSwitch: 2, // 6031940436「そのフォームのままで弾けない」
+    shapeChange: 1, // 同じ手のまとまりでも形の変化には費用を付ける
+    movedCommon: 4, // PR27 / HPS4: 共通音を残す（v2では有限の費用）
+    usage: 2, // 6031973162・6031982826: 修飾のしやすさを使用傾向で表す
+  },
+  // 6031957946「速いBPM」: movement重みを(BPM/referenceBpm)^2倍。
+  // 範囲指定された様式は重みでなく、同じ度数形の平行移動という制約。
+  forms: {
+    m7: [
+      { id: 'paired-fifths', left: [0, 7], right: [3, 10], usageCost: 0,
+        reason: 'HPS4/S08: 左R+5・右m3+b7。第1フォーム。5度への修飾を優先。' },
+      { id: 'right-root-seventh', left: [3, 7], right: [0, 10], usageCost: 1,
+        reason: '#14 6031973162: 右R+b7はm7で使用頻度が低い。5度へのクロマチックアプローチがしにくい。' },
+    ],
+    dom7: [
+      { id: 'right-root-seventh', left: [4, 7], right: [0, 10], usageCost: 0,
+        reason: '#14 6031982826: dom7で右R+b7を多用。3度へのクロマチックアプローチがしやすい。' },
+    ],
+  },
+};
+// 既定の手本を呼び出し側で書き換えず、options.modelで版を渡す。
+(function freezeModel(value) {
+  Object.keys(value).forEach(function(key) {
+    if (value[key] && typeof value[key] === 'object') freezeModel(value[key]);
+  });
+  Object.freeze(value);
+})(PAD_POSITION_MODEL_V2);
+
 // Conditional exports for Node.js (Vitest) — ignored in browser
 if (typeof module !== 'undefined') module.exports = {
   NOTE_NAMES_SHARP, NOTE_NAMES_FLAT, FLAT_MAJOR_KEYS,
@@ -1330,7 +1368,7 @@ if (typeof module !== 'undefined') module.exports = {
   padGetDim7AvailableTensionPCs, padGetDim7AvailableTensions, PAD_DIM7_TENSION_DEFINITIONS,
   PAD_ROOT_TO_PC, PAD_ABSTRACT_CHORD_SHORTHANDS,
   PAD_QUALITY_INTERVALS, PAD_QUALITY_KEYS, PAD_QUALITY_DISPLAY,
-  GRID, GRID_32, SCALE_DEGREE_NAMES,
+  GRID, GRID_32, SCALE_DEGREE_NAMES, PAD_POSITION_MODEL_V2,
   PAD_INST_COLORS, PAD_GUITAR_TUNING, PAD_GUITAR_NAMES, PAD_BASS_TUNING, PAD_BASS_NAMES,
   padBuildChordDetectDB, CHORD_DETECT_DB, TRIAD_DETECT_DB, TETRAD_DETECT_DB,
   PAD_THEME_OKABE_ITO,
