@@ -1325,9 +1325,12 @@ padInstallGuitarSourcePatternSeeds();
 // 距離単位: 同じまとまりの中の盤面マンハッタン距離。上限4も初期仮説。
 // 手・度数は内部情報。フォーム1の手はunknownのまま推定しない。
 var PAD_POSITION_MODEL_V2 = {
-  version: 'performance-v2-corrected-forms',
+  version: 'performance-v2-convex-movement',
   limits: { maxHandDistance: 4, maxSteps: 512, maxCandidates: 128 },
   referenceBpm: 120,
+  // 6035035879「そう。同じ弾き方だと左に移動する必要があるからね。」
+  // 大きな移動ほど重くする最小の多項式（2乗）という初期仮説。1で旧線形。
+  movementExponent: 2,
   weights: {
     fingerDistance: 1, // #14 6031949062「指の距離だね。」
     balance: 2, // 6031946064「両手で出来るだけ均等に」

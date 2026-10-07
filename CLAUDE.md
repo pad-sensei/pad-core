@@ -37,9 +37,9 @@ npm run test:watch  # vitest watch mode
 ```
 
 ## 現在地（自動更新）
-- 本branch: 2026-10-07、PR28 `feat/pad-core-performance-v2` のm7フォーム定義を管理側の訂正に合わせて修正。フォーム1はR+b7／右側m3+5のまとまり（手unknown）、フォーム2はHPS4・右R+b7／左m3+5。距離は対の中で測り、両手本を通常再生成できる。数値の変更なし。
-- 本branchの検証: 全15files/448、PR27の40、Node/script互換PASS。Dm7フォーム1→Em7はフォーム2へ切り替わるが、維持候補と費用20対20でserial順。「指の距離で弾けない」の因果は未再現。修正/検証と原演奏適合は分ける。
-- 本branchの次: 管理担当の独立session再レビューと、Dm7→Em7の原演奏入力・費用の判断。`docs/PERFORMANCE_POSITIONS_V2.md` と `../SOL_INSTRUCTION_pad_core_v2_fix.md` が入口。DOJO/64PE接続・音楽的採用・mergeなし。証拠は `../HANDOFF/pad-core-v2-fix/REPORT.md`。
+- 本branch: 2026-10-07、PR28 `feat/pad-core-performance-v2`。訂正済みのm7両フォームは維持。最新原文6035035879「そう。同じ弾き方だと左に移動する必要があるからね。」に従い、大きな手の移動を各手/役割のまとまり単位で二乗の負担へ。既存の重み・距離上限・BPM係数は維持。指数2は実装前に定めた初期仮説、1で旧線形へ戻せる。
+- 本branchの検証: 全15files/457、PR27の既存40、Node/script互換PASS。Dm7フォーム1→Em7は切替48<維持68、移動40<64でフォーム2を選ぶ。切替2・使用傾向2・指間距離4を保持し、フォーム1全候補に厳密な費用差。旧線形だけに戻すと20対20。HPS4/BPM/様式区間も維持。
+- 本branchの次: 管理担当の独立session再レビュー・音楽的採用。`docs/PERFORMANCE_POSITIONS_V2.md` と `../SOL_INSTRUCTION_pad_core_v2_fix.md` が入口。DOJO/64PE接続・mergeなし。証拠は `../HANDOFF/pad-core-v2-movement/REPORT.md`。Dm7の具体音域・位置、指数2を原演奏の測定値と扱わない。
 
 以下は既存の理論計算の状態（2026-09-11）。
 - 状態: 2026-09-11、root-relative pc8 の和声役割を `b6` / structural `#5` / altered `b13` に分離。`addb13` は自動検出語彙から外し、plain triad + pc8 は必要なら `b6`、`b13` は b7 を含む seventh-chord context でのみ自動解釈する。転回形では complete conventional inversion を unexplained b6/b13 color より優先する。

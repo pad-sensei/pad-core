@@ -27,7 +27,11 @@ function edgeCost(a, b, bpm = 120) {
   const known = a.internal.hands.left && b.internal.hands.left;
   const poolsA = known ? a.internal.hands : Object.fromEntries(Object.entries(a.internal.groups).map(([id, g]) => [id, g.notes]));
   const poolsB = known ? b.internal.hands : Object.fromEntries(Object.entries(b.internal.groups).map(([id, g]) => [id, g.notes]));
-  const move = Object.keys(poolsA).reduce((n, id) => n + handMovement(poolsA[id], poolsB[id]), 0);
+  // 大きな移動の負担を各手/まとまりで別計算。1音平均1以下は従来の線形。
+  const effort = Object.keys(poolsA).reduce((n, id) => {
+    const d = handMovement(poolsA[id], poolsB[id]);
+    return n + d * Math.max(1, d / 2);
+  }, 0);
   const old = new Map(a.bindings.map(b => [b.pitch, b.serial]));
   const moved = b.bindings.filter(b => old.has(b.pitch) && old.get(b.pitch) !== b.serial).length;
   const notesA = Object.values(a.internal.groups).flatMap(g => g.notes);
@@ -38,7 +42,7 @@ function edgeCost(a, b, bpm = 120) {
   });
   const sameForm = a.formId === b.formId;
   const parallel = sameForm && new Set(deltas).size === 1;
-  return move * (bpm / 120) ** 2 + moved * 4 + (sameForm ? (parallel ? 0 : 1) : 2);
+  return effort * (bpm / 120) ** 2 + moved * 4 + (sameForm ? (parallel ? 0 : 1) : 2);
 }
 // intrinsicCostの出力は使わず、公開まとまりの座標と既定重みから費用を再計算。
 function intrinsicCost(candidate) {
@@ -66,7 +70,8 @@ describe('演奏ロジックv2・受け入れ', () => {
     expect(r.results[0].source).toBe('seed');
   });
   it('(b) 原文の期待: フォーム1のDm7からEm7でフォーム2へ切り替える', () => {
-    // 期待formIdは6031940436から先に決定。Em7のserialを演奏正解とはしない。
+    // 期待は6035035879「そう。同じ弾き方だと左に移動する必要があるからね。」
+    // 大きな左移動より近くでの切替。Em7のserialを演奏正解とはしない。
     const expectedForm = FORM2;
     const r = padResolvePerformanceSequence([DM, chord(4)]);
     expect(r.ok).toBe(true);
@@ -83,13 +88,42 @@ describe('演奏ロジックv2・受け入れ', () => {
     expect(r.results[1].internal.hands.right.map(b => b.degree)).toEqual([0, 10]);
     expect(r.results[1].internal.hands.left.map(b => b.degree)).toEqual([3, 7]);
     expect(r.results[1].metrics.transition.switched).toBe(true);
-    // 診断という性質の確認。フォーム1も弾け、距離は増えない。
+    // フォーム1も弾け、対内距離は等しい。切替は費用差で選ぶ。
     const stay = padResolvePerformanceSequence([DM, { ...chord(4), formId: FORM1 }]);
     expect(stay.ok).toBe(true);
     expect(stay.results[1].metrics.transition.parallel).toBe(true);
     expect(stay.results[1].metrics.groupSpans).toEqual(r.results[1].metrics.groupSpans);
     expect(r.results[1].metrics.transition.movement).toBeLessThan(stay.results[1].metrics.transition.movement);
-    expect(r.totalCost).toBe(stay.totalCost); // 同費用のserial順。指距離による禁止ではない。
+    expect(r.totalCost).toBeLessThan(stay.totalCost);
+    const switched = r.results[1];
+    const retained = stay.results[1];
+    expect(switched.metrics.costs.fingerDistance).toBe(retained.metrics.costs.fingerDistance);
+    expect(switched.metrics.transition.costs.formSwitch).toBe(2);
+    expect(switched.metrics.costs.usage).toBe(2);
+    expect(retained.metrics.transition.costs.formSwitch).toBe(0);
+    expect(retained.metrics.costs.usage).toBe(0);
+    expect(retained.metrics.transition.costs.movement - switched.metrics.transition.costs.movement)
+      .toBeGreaterThan(switched.metrics.transition.costs.formSwitch + switched.metrics.costs.usage);
+    // 座標の独立計算: 維持は各対(Δrow,Δcol)=(1,-3)、平均4×2音×2対=64。
+    // 切替はR+b7が(0,2)、m3+5が(1,-3)、2^2×2+4^2×2=40。
+    expect(retained.metrics.transition.costs.movement).toBe(64);
+    expect(switched.metrics.transition.costs.movement).toBe(40);
+    expect(stay.totalCost).toBe(68); // 移動64 + 指間距離4
+    expect(r.totalCost).toBe(48); // 移動40 + 指間距離4 + 切替2 + 使用傾向2
+    // 非線形の移動負担だけを外すと旧20対20。重みの調整で通さない。
+    const linearOptions = { model: { movementExponent: 1 } };
+    const linear = padResolvePerformanceSequence([DM, chord(4)], linearOptions);
+    const linearStay = padResolvePerformanceSequence([DM, { ...chord(4), formId: FORM1 }], linearOptions);
+    expect(linear.totalCost).toBe(20);
+    expect(linearStay.totalCost).toBe(20);
+    // 各候補をoverrideにして同じ遷移を個別評価。固定点のintrinsicは別加算。
+    const candidates = padEnumPerformancePositions(chord(4)).candidates;
+    const evaluated = candidates.map(c => {
+      const forced = padResolvePerformanceSequence([DM, { ...chord(4), explicit: c.bindings, formId: c.formId }]);
+      return { formId: c.formId, cost: forced.totalCost + intrinsicCost(c) };
+    });
+    expect(r.totalCost).toBe(Math.min(...evaluated.map(c => c.cost)));
+    expect(evaluated.filter(c => c.formId === FORM1).every(c => c.cost > r.totalCost)).toBe(true);
     const noReachLimit = padResolvePerformanceSequence([DM, chord(4)], { model: { limits: { maxHandDistance: 14 } } });
     expect(noReachLimit.results[1].formId).toBe(expectedForm);
   });
@@ -124,6 +158,55 @@ describe('演奏ロジックv2・受け入れ', () => {
     expect(full.totalCost).toBeLessThan(greedyTotal);
     expect(serials(full.results[1])).not.toEqual(serials(pair.results[1]));
     expect(full.totalCost).toBe(bruteThree(steps));
+  });
+});
+
+describe('大きな移動の費用規則（特定のコードや盤端に限定しない）', () => {
+  const knownSeed = { ...chord(0), formId: FORM2,
+    // HPS4を(row-3,col+3)で−12半音。colが盤外に出ない平行移動。
+    explicit: B([[48, 51], [51, 57], [55, 64], [58, 67]]) };
+  const translate = (seed, rows) => ({ ...seed,
+    root: ((seed.root + rows * 5) % 12 + 12) % 12,
+    pitches: seed.pitches.map(p => p + rows * 5),
+    explicit: seed.explicit.map(b => ({ pitch: b.pitch + rows * 5, serial: b.serial + rows * 8 })),
+  });
+  it.each([
+    ['unknownの役割のまとまり', SEED, 'role-groups'],
+    ['確定した左右の手', knownSeed, 'known-hands'],
+  ])('%s: 平行移動は方向によらず大きさの二乗、1で旧線形に戻る', (_, seed, basis) => {
+    // 期待は各音が同じ列でrow差k、各対が2音という座標から計算。
+    // 0/±1/+2/+3行の異なるコードで検証し、Dm7→Em7に数値を寄せない。
+    for (const rows of [0, 1, -1, 2, 3]) {
+      const steps = [seed, translate(seed, rows)];
+      const result = padResolvePerformanceSequence(steps);
+      expect(result.ok).toBe(true);
+      const transition = result.results[1].metrics.transition;
+      expect(transition.movementBasis).toBe(basis);
+      expect(transition.parallel).toBe(true);
+      expect(transition.movement).toBe(4 * Math.abs(rows));
+      expect(transition.movementEffort).toBe(4 * rows ** 2);
+      expect(transition.costs.movement).toBe(4 * rows ** 2);
+      for (const group of Object.values(transition.movementGroups)) {
+        expect(group).toEqual({ distance: 2 * Math.abs(rows), matched: 2,
+          meanDistance: Math.abs(rows), effort: 2 * rows ** 2 });
+      }
+      const linear = padResolvePerformanceSequence(steps, { model: { movementExponent: 1 } });
+      expect(linear.results[1].metrics.transition.costs.movement).toBe(4 * Math.abs(rows));
+      const fast = padResolvePerformanceSequence(steps, { bpm: 240 });
+      expect(fast.results[1].metrics.transition.costs.movement).toBe(16 * rows ** 2);
+    }
+  });
+  it('一方の大移動を両まとまりの平均で薄めない', () => {
+    // 各音平均(2,4)なら40。全体平均3として計算した36より大きい。
+    // 座標から指定した遷移で、距離合計だけの非線形化との違いを確認する。
+    const uneven = { ...chord(4), formId: FORM2,
+      explicit: B([[52, 58], [55, 64], [59, 71], [62, 74]]) };
+    const a = padResolvePerformanceSequence([DM, uneven]).results[1].metrics.transition;
+    expect(a.movementGroups['root-seventh'].effort).toBe(8);
+    expect(a.movementGroups['third-fifth'].effort).toBe(32);
+    expect(a.movementEffort).toBe(40);
+    expect(a.movement).toBe(12);
+    expect(a.movementEffort).toBeGreaterThan(a.movement ** 2 / 4);
   });
 });
 
@@ -271,6 +354,7 @@ describe('不正入力・探索上限・失敗の境界', () => {
     { octaveShift: 0.5 }, { model: null }, { model: 5 },
     { model: { weights: { movement: -1 } } }, { model: { weights: { balance: NaN } } },
     { model: { referenceBpm: 0 } }, { model: { limits: { maxCandidates: 129 } } },
+    ...[0, -1, 0.5, NaN, Infinity, '2'].map(movementExponent => ({ model: { movementExponent } })),
     { model: { limits: { maxSteps: 0 } } },
     { model: { forms: { m7: [{ id: 'bad', left: [0, 7], right: [7, 10], usageCost: 0 }] } } },
     { model: { forms: { m7: [{ id: 'bad', groups: [

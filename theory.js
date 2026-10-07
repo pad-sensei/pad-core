@@ -769,13 +769,14 @@ function _padPositionConfig(options) {
     limits: Object.assign({}, base.limits, override.limits),
     weights: Object.assign({}, base.weights, override.weights),
     referenceBpm: override.referenceBpm === undefined ? base.referenceBpm : override.referenceBpm,
+    movementExponent: override.movementExponent === undefined ? base.movementExponent : override.movementExponent,
     forms: override.forms === undefined ? base.forms : override.forms,
   };
   if (typeof model.version !== 'string' || !model.version) return null;
   var bpm = options && options.bpm !== undefined ? options.bpm : model.referenceBpm;
   var shift = options && options.octaveShift !== undefined ? options.octaveShift : 0;
   function positive(n) { return typeof n === 'number' && Number.isFinite(n) && n > 0; }
-  if (!positive(bpm) || !positive(model.referenceBpm) || !Number.isInteger(shift) ||
+  if (!positive(bpm) || !positive(model.referenceBpm) || !positive(model.movementExponent) || model.movementExponent < 1 || !Number.isInteger(shift) ||
       !positive(model.limits.maxHandDistance) || !model.forms || typeof model.forms !== 'object') return null;
   for (var key of ['maxSteps', 'maxCandidates']) {
     if (!Number.isInteger(model.limits[key]) || model.limits[key] < 1 || model.limits[key] > base.limits[key]) return null;
@@ -982,17 +983,29 @@ function _padPositionParallel(a, b) {
 }
 
 function _padPositionTransition(a, b, cfg) {
-  var movement = 0;
+  var movement = 0, movementEffort = 0, movementGroups = Object.create(null);
   var movementBasis;
+  function addMovement(id, prevNotes, nextNotes) {
+    var distance = _padMinManhattanMatching(prevNotes, nextNotes);
+    var matched = Math.min(prevNotes.length, nextNotes.length);
+    var meanDistance = matched ? distance / matched : 0;
+    // 1パッド以下は線形、それ以上は平均移動距離の累乗で負担を増す。
+    // 手/まとまり単位なので、一方だけ大きく動く場合も合計で均さない。
+    // キー・方向・盤端・フォームに特例を置かない。余り音は既存同様費用0。
+    var effort = distance * Math.pow(Math.max(1, meanDistance), cfg.model.movementExponent - 1);
+    movement += distance;
+    movementEffort += effort;
+    movementGroups[id] = { distance: distance, matched: matched, meanDistance: meanDistance, effort: effort };
+  }
   if (a.internal.hands.left && a.internal.hands.right && b.internal.hands.left && b.internal.hands.right) {
     movementBasis = 'known-hands';
-    for (var hand of ['left', 'right']) movement += _padMinManhattanMatching(a.internal.hands[hand], b.internal.hands[hand]);
+    for (var hand of ['left', 'right']) addMovement(hand, a.internal.hands[hand], b.internal.hands[hand]);
   } else {
     // 左右未指定なら同じ役割のまとまり同士。手を推定した移動費用ではない。
     movementBasis = 'role-groups';
     var groupIds = Object.keys(a.internal.groups);
     if (groupIds.some(function(id) { return !b.internal.groups[id]; })) return { cost: Infinity };
-    for (var id of groupIds) movement += _padMinManhattanMatching(a.internal.groups[id].notes, b.internal.groups[id].notes);
+    for (var id of groupIds) addMovement(id, a.internal.groups[id].notes, b.internal.groups[id].notes);
   }
   var prev = {};
   a.bindings.forEach(function(p) { prev[p.pitch] = p.serial; });
@@ -1000,12 +1013,13 @@ function _padPositionTransition(a, b, cfg) {
   var switched = a.formId !== b.formId;
   var parallel = _padPositionParallel(a, b);
   var costs = {
-    movement: movement * cfg.movementWeight,
+    movement: movementEffort * cfg.movementWeight,
     movedCommon: movedCommon * cfg.model.weights.movedCommon,
     formSwitch: switched ? cfg.model.weights.formSwitch : 0,
     shapeChange: !switched && !parallel ? cfg.model.weights.shapeChange : 0,
   };
-  return { movement: movement, movementBasis: movementBasis, movedCommon: movedCommon, switched: switched, parallel: parallel,
+  return { movement: movement, movementEffort: movementEffort, movementGroups: movementGroups,
+    movementBasis: movementBasis, movedCommon: movedCommon, switched: switched, parallel: parallel,
     costs: costs, cost: costs.movement + costs.movedCommon + costs.formSwitch + costs.shapeChange };
 }
 
