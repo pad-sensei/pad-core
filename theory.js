@@ -758,6 +758,336 @@ function padResolveNearestSequence(steps, options) {
   return { ok: true, results: results };
 }
 
+// ======== 押さえ方 第2版（任意に利用するAPI、PR27は互換維持） ========
+
+function _padPositionConfig(options) {
+  var base = PAD_POSITION_MODEL_V2;
+  if (options && options.model !== undefined && (!options.model || typeof options.model !== 'object' || Array.isArray(options.model))) return null;
+  var override = options && options.model || {};
+  var model = {
+    version: override.version || base.version,
+    limits: Object.assign({}, base.limits, override.limits),
+    weights: Object.assign({}, base.weights, override.weights),
+    referenceBpm: override.referenceBpm === undefined ? base.referenceBpm : override.referenceBpm,
+    movementExponent: override.movementExponent === undefined ? base.movementExponent : override.movementExponent,
+    forms: override.forms === undefined ? base.forms : override.forms,
+  };
+  if (typeof model.version !== 'string' || !model.version) return null;
+  var bpm = options && options.bpm !== undefined ? options.bpm : model.referenceBpm;
+  var shift = options && options.octaveShift !== undefined ? options.octaveShift : 0;
+  function positive(n) { return typeof n === 'number' && Number.isFinite(n) && n > 0; }
+  if (!positive(bpm) || !positive(model.referenceBpm) || !positive(model.movementExponent) || model.movementExponent < 1 || !Number.isInteger(shift) ||
+      !positive(model.limits.maxHandDistance) || !model.forms || typeof model.forms !== 'object') return null;
+  for (var key of ['maxSteps', 'maxCandidates']) {
+    if (!Number.isInteger(model.limits[key]) || model.limits[key] < 1 || model.limits[key] > base.limits[key]) return null;
+  }
+  for (var weight of Object.keys(model.weights)) {
+    if (typeof model.weights[weight] !== 'number' || !Number.isFinite(model.weights[weight]) || model.weights[weight] < 0) return null;
+  }
+  var factor = Math.pow(bpm / model.referenceBpm, 2);
+  if (!Number.isFinite(factor * model.weights.movement)) return null;
+  var normalizedForms = Object.create(null);
+  for (var quality of Object.keys(model.forms)) {
+    var forms = model.forms[quality], ids = new Set();
+    if (!Array.isArray(forms) || forms.length === 0 || forms.length > base.limits.maxCandidates) return null;
+    normalizedForms[quality] = [];
+    for (var form of forms) {
+      if (!form || typeof form.id !== 'string' || !form.id || ids.has(form.id) ||
+          typeof form.usageCost !== 'number' || !Number.isFinite(form.usageCost) || form.usageCost < 0) return null;
+      ids.add(form.id);
+      // 既存の調整用left/right手本も受ける。既定m7は手を推定しないgroups形式。
+      var groups = form.groups;
+      if (groups === undefined) {
+        if (!Array.isArray(form.left) || !Array.isArray(form.right)) return null;
+        groups = [{ id: 'left', degrees: form.left, hand: 'left' }, { id: 'right', degrees: form.right, hand: 'right' }];
+      }
+      if (!Array.isArray(groups) || groups.length !== 2) return null;
+      var degrees = [], groupIds = new Set(), assignedHands = new Set();
+      for (var group of groups) {
+        if (!group || typeof group.id !== 'string' || !group.id || groupIds.has(group.id) ||
+            !Array.isArray(group.degrees) || !group.degrees.length || !['left', 'right', 'unknown'].includes(group.hand)) return null;
+        if (group.hand !== 'unknown') {
+          if (assignedHands.has(group.hand)) return null;
+          assignedHands.add(group.hand);
+        }
+        groupIds.add(group.id);
+        degrees = degrees.concat(group.degrees);
+      }
+      if (degrees.length > PAD_NEAREST_MAX_PITCHES || new Set(degrees).size !== degrees.length ||
+          !degrees.includes(0) || degrees.some(function(d) { return !Number.isInteger(d) || d < 0 || d > 11; })) return null;
+      if (form.geometry !== undefined && (!form.geometry || typeof form.geometry !== 'object' || Array.isArray(form.geometry) || !groupIds.has(form.geometry.group) || !groupIds.has(form.geometry.relativeTo) ||
+          form.geometry.group === form.geometry.relativeTo || !['left', 'right'].includes(form.geometry.side))) return null;
+      normalizedForms[quality].push(Object.assign({}, form, { groups: groups }));
+    }
+  }
+  model.forms = normalizedForms;
+  return { model: model, bpm: bpm, movementWeight: model.weights.movement * factor };
+}
+
+function _padPositionHandSpan(hand) {
+  var span = 0;
+  for (var i = 0; i < hand.length; i++) {
+    for (var j = i + 1; j < hand.length; j++) {
+      span = Math.max(span, Math.abs(hand[i].row - hand[j].row) + Math.abs(hand[i].col - hand[j].col));
+    }
+  }
+  return span;
+}
+
+function _padPositionCandidate(bindings, root, form, cfg, fixed) {
+  var degrees = {};
+  bindings.forEach(function(b) { degrees[((b.pitch - root) % 12 + 12) % 12] = b; });
+  var groups = Object.create(null), hands = { left: null, right: null }, groupSpans = Object.create(null);
+  form.groups.forEach(function(group) {
+    var notes = group.degrees.slice().sort(function(a, b) { return a - b; }).map(function(d) {
+      return Object.assign({ degree: d }, degrees[d]);
+    });
+    groups[group.id] = { notes: notes, hand: group.hand };
+    groupSpans[group.id] = _padPositionHandSpan(notes);
+    if (group.hand !== 'unknown') hands[group.hand] = notes;
+  });
+  // 手の左右と盤面の左右を分ける。手本の向きを対の平均列で分類する初期仮説。
+  // 平均が同じ転回配置は両フォームに属し得る（HPS4→Fm7を排除しない）。
+  var matchesGeometry = true;
+  if (form.geometry) {
+    var geometry = form.geometry;
+    function meanCol(id) { return groups[id].notes.reduce(function(n, b) { return n + b.col; }, 0) / groups[id].notes.length; }
+    var delta = meanCol(geometry.group) - meanCol(geometry.relativeTo);
+    matchesGeometry = geometry.side === 'right' ? delta >= 0 : delta <= 0;
+  }
+  var spans = Object.values(groupSpans);
+  var unreachable = Math.max.apply(null, spans) > cfg.model.limits.maxHandDistance;
+  if ((!matchesGeometry || unreachable) && !fixed) return null;
+  var balance = Math.abs(form.groups[0].degrees.length - form.groups[1].degrees.length);
+  var weights = cfg.model.weights;
+  var costs = {
+    fingerDistance: weights.fingerDistance * spans.reduce(function(a, b) { return a + b; }, 0),
+    balance: weights.balance * balance,
+    usage: weights.usage * form.usageCost,
+  };
+  var cost = fixed ? 0 : costs.fingerDistance + costs.balance + costs.usage;
+  if (!Number.isFinite(cost)) return null;
+  return {
+    ok: true, bindings: bindings, formId: form.id,
+    internal: { groups: groups, hands: hands, reason: form.reason || '', fixed: fixed },
+    metrics: { groupSpans: groupSpans,
+      leftSpan: hands.left === null ? null : _padPositionHandSpan(hands.left),
+      rightSpan: hands.right === null ? null : _padPositionHandSpan(hands.right), balance: balance,
+      matchesGeometry: matchesGeometry, exceedsReach: unreachable, costs: costs, intrinsicCost: cost },
+  };
+}
+
+/**
+ * step={root: pitch class 0..11, quality:'m7'|'dom7'|手本で追加した質,
+ *       pitches:[実MIDI], explicit?:[{pitch,serial}], formId?:内部のフォーム指定}。
+ * options={octaveShift?, bpm?, model?:{version?,weights?,limits?,referenceBpm?,forms?}}。
+ * 既定はm7の2つとdom7の右R+b7。指の推定・UI表示は行わない。
+ * 同じ度数の重複オクターブ・shell・未登録の質は黙って一般形へ逃げない。
+ * explicitは固定。未指定のformIdは幾何に合う最初の手本を使う。
+ * 指間距離を超えるexplicitも動かさず、metrics.exceedsReachで伝える。
+ */
+function padEnumPerformancePositions(step, options) {
+  var cfg = _padPositionConfig(options);
+  if (!cfg) return _padNearestFail('invalid_model');
+  if (!step || !Number.isInteger(step.root) || step.root < 0 || step.root > 11 || typeof step.quality !== 'string') {
+    return _padNearestFail('harmony_required');
+  }
+  var allForms = Object.prototype.hasOwnProperty.call(cfg.model.forms, step.quality) ? cfg.model.forms[step.quality] : null;
+  if (!allForms) return _padNearestFail('unsupported_quality');
+  if (step.pitches !== undefined && !Array.isArray(step.pitches)) return _padNearestFail('invalid_pitch');
+  var pitches = _padNearestUniquePitches(step.pitches || []);
+  if (pitches === null) return _padNearestFail('invalid_pitch');
+  if (!pitches.length) return _padNearestFail('empty_pitches');
+  if (pitches.length > PAD_NEAREST_MAX_PITCHES) return _padNearestFail('too_many_pitches');
+  var degrees = pitches.map(function(p) { return ((p - step.root) % 12 + 12) % 12; }).sort(function(a, b) { return a - b; });
+  var forms = allForms.filter(function(f) {
+    var expected = f.groups.flatMap(function(g) { return g.degrees; }).sort(function(a, b) { return a - b; });
+    return expected.length === degrees.length && expected.every(function(d, i) { return d === degrees[i]; });
+  });
+  if (!forms.length) return _padNearestFail('unsupported_voicing');
+  if (step.formId !== undefined) {
+    forms = forms.filter(function(f) { return f.id === step.formId; });
+    if (!forms.length) return _padNearestFail('unknown_form');
+  }
+  var fixed = step.explicit !== undefined;
+  var pools, explicit;
+  if (fixed) {
+    if (!Array.isArray(step.explicit)) return _padNearestFail('invalid_explicit');
+    var checked = _padNearestCheckBindings(step.explicit, options);
+    if (!checked.ok) return checked.tooMany ? _padNearestFail('too_many_pitches') : _padNearestFail('invalid_explicit', { bad: checked.bad });
+    explicit = checked.bindings;
+    if (explicit.length !== pitches.length || explicit.some(function(b, i) { return b.pitch !== pitches[i]; })) {
+      return _padNearestFail('explicit_pitch_mismatch');
+    }
+    // formId未指定なら手本の幾何に合うフォームを選ぶ。指定formIdは動かさない。
+    forms = [forms.find(function(form) {
+      return _padPositionCandidate(explicit, step.root, form, cfg, true).metrics.matchesGeometry;
+    }) || forms[0]];
+    pools = explicit.map(function(b) { return [b]; });
+  } else {
+    var layout = padNearestLayout(options);
+    pools = pitches.map(function(p) {
+      return _padNearestPadsForPitch(p, layout).map(function(pad) {
+        return { pitch: p, serial: padRowColToSerial(pad.row, pad.col), row: pad.row, col: pad.col };
+      });
+    });
+    var missing = pitches.filter(function(p, i) { return !pools[i].length; });
+    if (missing.length) return _padNearestFail('unplaceable', { unplaceablePitches: missing });
+  }
+  // 上限で候補を切り捨てて最適と称さず、探索自体を明示的に止める。
+  var count = pools.reduce(function(n, pool) { return n * pool.length; }, forms.length);
+  if (count > cfg.model.limits.maxCandidates) return _padNearestFail('too_many_candidates');
+  var candidates = [], chosen = [], rejected = 0, rejectedGeometry = 0;
+  function walk(index) {
+    if (index === pools.length) {
+      forms.forEach(function(form) {
+        var candidate = _padPositionCandidate(chosen.slice(), step.root, form, cfg, fixed);
+        if (candidate) candidates.push(candidate);
+        else {
+          var diagnostic = _padPositionCandidate(chosen.slice(), step.root, form, cfg, true);
+          if (diagnostic.metrics.exceedsReach) rejected++;
+          if (!diagnostic.metrics.matchesGeometry) rejectedGeometry++;
+        }
+      });
+      return;
+    }
+    pools[index].forEach(function(b) { chosen.push(b); walk(index + 1); chosen.pop(); });
+  }
+  walk(0);
+  candidates.sort(function(a, b) {
+    for (var i = 0; i < a.bindings.length; i++) {
+      if (a.bindings[i].serial !== b.bindings[i].serial) return a.bindings[i].serial - b.bindings[i].serial;
+    }
+    return a.formId < b.formId ? -1 : a.formId > b.formId ? 1 : 0;
+  });
+  if (!candidates.length) return _padNearestFail('no_playable_form', { rejectedByReach: rejected, rejectedByGeometry: rejectedGeometry });
+  return { ok: true, candidates: candidates, rejectedByReach: rejected, rejectedByGeometry: rejectedGeometry };
+}
+
+// 同じ度数の位置差が全て一致する時だけ厳密な平行移動。
+function _padPositionParallel(a, b) {
+  if (a.formId !== b.formId) return false;
+  var dr = null, dc = null;
+  // 度数はgroupsに持つ。手のunknownに左右を補わず同形を判定する。
+  var prevNotes = Object.values(a.internal.groups).flatMap(function(g) { return g.notes; });
+  var nextNotes = Object.values(b.internal.groups).flatMap(function(g) { return g.notes; });
+  if (prevNotes.length !== nextNotes.length) return false;
+  for (var p of prevNotes) {
+    var q = nextNotes.find(function(n) { return n.degree === p.degree; });
+    if (!q) return false;
+    var r = q.row - p.row, c = q.col - p.col;
+    if (dr === null) { dr = r; dc = c; }
+    if (r !== dr || c !== dc) return false;
+  }
+  return true;
+}
+
+function _padPositionTransition(a, b, cfg) {
+  var movement = 0, movementEffort = 0, movementGroups = Object.create(null);
+  var movementBasis;
+  function addMovement(id, prevNotes, nextNotes) {
+    var distance = _padMinManhattanMatching(prevNotes, nextNotes);
+    var matched = Math.min(prevNotes.length, nextNotes.length);
+    var meanDistance = matched ? distance / matched : 0;
+    // 1パッド以下は線形、それ以上は平均移動距離の累乗で負担を増す。
+    // 手/まとまり単位なので、一方だけ大きく動く場合も合計で均さない。
+    // キー・方向・盤端・フォームに特例を置かない。余り音は既存同様費用0。
+    var effort = distance * Math.pow(Math.max(1, meanDistance), cfg.model.movementExponent - 1);
+    movement += distance;
+    movementEffort += effort;
+    movementGroups[id] = { distance: distance, matched: matched, meanDistance: meanDistance, effort: effort };
+  }
+  if (a.internal.hands.left && a.internal.hands.right && b.internal.hands.left && b.internal.hands.right) {
+    movementBasis = 'known-hands';
+    for (var hand of ['left', 'right']) addMovement(hand, a.internal.hands[hand], b.internal.hands[hand]);
+  } else {
+    // 左右未指定なら同じ役割のまとまり同士。手を推定した移動費用ではない。
+    movementBasis = 'role-groups';
+    var groupIds = Object.keys(a.internal.groups);
+    if (groupIds.some(function(id) { return !b.internal.groups[id]; })) return { cost: Infinity };
+    for (var id of groupIds) addMovement(id, a.internal.groups[id].notes, b.internal.groups[id].notes);
+  }
+  var prev = {};
+  a.bindings.forEach(function(p) { prev[p.pitch] = p.serial; });
+  var movedCommon = b.bindings.filter(function(p) { return prev[p.pitch] !== undefined && prev[p.pitch] !== p.serial; }).length;
+  var switched = a.formId !== b.formId;
+  var parallel = _padPositionParallel(a, b);
+  var costs = {
+    movement: movementEffort * cfg.movementWeight,
+    movedCommon: movedCommon * cfg.model.weights.movedCommon,
+    formSwitch: switched ? cfg.model.weights.formSwitch : 0,
+    shapeChange: !switched && !parallel ? cfg.model.weights.shapeChange : 0,
+  };
+  return { movement: movement, movementEffort: movementEffort, movementGroups: movementGroups,
+    movementBasis: movementBasis, movedCommon: movedCommon, switched: switched, parallel: parallel,
+    costs: costs, cost: costs.movement + costs.movedCommon + costs.formSwitch + costs.shapeChange };
+}
+
+/**
+ * 進行全体の動的計画法。候補・形は各stepの実音高を変えない。
+ * options.constantStructure=[{from,to}]（両端を含むindex）。自動で区間を作らない。
+ * 指定区間内の隣接stepは同じフォームの厳密な平行移動に制限する。
+ * seed/overrideとの衝突はstyle_conflict。届かない形を様式で復活させない。
+ * PR27のpadResolveNearestSequenceとは別API。最初の失敗で止め、後ろは返さない。
+ */
+function padResolvePerformanceSequence(steps, options) {
+  var cfg = _padPositionConfig(options);
+  if (!cfg) return { ok: false, results: [], reason: 'invalid_model' };
+  if (!Array.isArray(steps)) return { ok: false, results: [], reason: 'invalid_steps' };
+  if (steps.length > cfg.model.limits.maxSteps) return { ok: false, results: [], reason: 'too_many_steps' };
+  var ranges = options && options.constantStructure !== undefined ? options.constantStructure : [];
+  if (!Array.isArray(ranges) || ranges.some(function(r) {
+    return !r || !Number.isInteger(r.from) || !Number.isInteger(r.to) || r.from < 0 || r.to >= steps.length || r.from >= r.to;
+  })) return { ok: false, results: [], reason: 'invalid_style' };
+  if (!steps.length) return { ok: true, results: [], totalCost: 0 };
+  var layers = [];
+  function recover() {
+    if (!layers.length) return [];
+    var layer = layers[layers.length - 1], best = 0;
+    for (var j = 1; j < layer.length; j++) if (layer[j].cost < layer[best].cost) best = j;
+    var results = [];
+    for (var index = layers.length - 1; index >= 0; index--) {
+      var state = layers[index][best], candidate = state.candidate;
+      results.unshift({ index: index, ok: true,
+        source: steps[index].explicit !== undefined ? (index === 0 ? 'seed' : 'override') : 'performance',
+        bindings: candidate.bindings, formId: candidate.formId, internal: candidate.internal,
+        metrics: Object.assign({}, candidate.metrics, { transition: state.transition, cumulativeCost: state.cost }),
+      });
+      best = state.prev;
+    }
+    return results;
+  }
+  function fail(index, res) {
+    var results = recover();
+    results.push(Object.assign({ index: index }, res));
+    return { ok: false, results: results, failedAt: index, reason: res.reason };
+  }
+  for (var i = 0; i < steps.length; i++) {
+    if (i === 0 && (!steps[i] || steps[i].explicit === undefined)) return fail(i, _padNearestFail('seed_required'));
+    var enumeration = padEnumPerformancePositions(steps[i], options);
+    if (!enumeration.ok) return fail(i, enumeration);
+    var strict = ranges.some(function(r) { return r.from < i && i <= r.to; });
+    var nextLayer = [];
+    for (var candidate of enumeration.candidates) {
+      if (i === 0) { nextLayer.push({ candidate: candidate, cost: 0, prev: -1, transition: null }); continue; }
+      var bestCost = Infinity, bestPrev = -1, bestTransition = null;
+      for (var j = 0; j < layers[i - 1].length; j++) {
+        var state = layers[i - 1][j];
+        if (strict && !_padPositionParallel(state.candidate, candidate)) continue;
+        var transition = _padPositionTransition(state.candidate, candidate, cfg);
+        var cost = state.cost + transition.cost + candidate.metrics.intrinsicCost;
+        if (Number.isFinite(cost) && cost < bestCost) { bestCost = cost; bestPrev = j; bestTransition = transition; }
+      }
+      if (bestPrev !== -1) nextLayer.push({ candidate: candidate, cost: bestCost, prev: bestPrev, transition: bestTransition });
+    }
+    if (!nextLayer.length) return fail(i, _padNearestFail(strict ? 'style_conflict' : 'cost_overflow'));
+    layers.push(nextLayer);
+  }
+  var results = recover();
+  return { ok: true, results: results, totalCost: results[results.length - 1].metrics.cumulativeCost,
+    modelVersion: cfg.model.version, bpm: cfg.bpm };
+}
+
 // ======== CHORD CONTEXT KEY ========
 
 function padChordContextKey(root, scaleIdx, key) {
@@ -2720,6 +3050,7 @@ if (typeof module !== 'undefined') module.exports = {
   padGetShellIntervals, padCalcAllVoicingPositions, padFindCompactPositions,
   padNearestLayout, padSerialToRowCol, padRowColToSerial, padPitchAtSerial,
   padChooseNearestPositions, padResolveNearestSequence,
+  padEnumPerformancePositions, padResolvePerformanceSequence,
   padChordContextKey, padGetBuilderChordName,
   padGetDiatonicTetrads, padFindParentScales,
   padEnumGuitarChordForms, padAnalyzeGuitarFormQuality,
