@@ -4,14 +4,19 @@ const B = pairs => pairs.map(([pitch, serial]) => ({ pitch, serial }));
 const serials = step => step.bindings.map(b => b.serial);
 const pairs = step => step.bindings.map(b => [b.pitch, b.serial]);
 const chord = root => ({ root, quality: 'm7', pitches: [0, 3, 7, 10].map(d => 48 + root + d) });
-const SEED = { ...chord(0), explicit: B([[48, 54], [51, 57], [55, 64], [58, 67]]) };
+const FORM1 = 'root-seventh-third-fifth-right';
+const FORM2 = 'right-root-seventh';
+const SEED = { ...chord(0), formId: FORM1, explicit: B([[48, 54], [51, 57], [55, 64], [58, 70]]) };
 const HPS = { root: 0, quality: 'm7', pitches: [60, 63, 67, 70],
   explicit: B([[60, 72], [63, 78], [67, 85], [70, 88]]) };
 const FM = { root: 5, quality: 'm7', pitches: [60, 63, 65, 68] };
-const DM = { ...chord(2), explicit: B([[50, 56], [53, 62], [57, 66], [60, 72]]) };
+// Cm7フォーム1 [72,75,82,88] を2行下へ平行移動したDm7。
+const DM = { ...chord(2), formId: 'root-seventh-third-fifth-right',
+  explicit: B([[50, 56], [53, 59], [57, 66], [60, 72]]) };
 const movement = result => result.results.slice(1).reduce((n, s) => n + s.metrics.transition.movement, 0);
 
-// 公開候補だけから全組合せを独立評価。DPの内部helperは使わない。
+// 性質の確認: 公開候補の全組合せを独立評価しDPを検証する。
+// 候補集合は実装由来であり、演奏正解・候補生成の完全性のoracleではない。
 const distance = (a, b) => Math.abs(a.row - b.row) + Math.abs(a.col - b.col);
 function handMovement(a, b) {
   // このoracleは既定の2音ずつの手本だけを扱う。
@@ -19,23 +24,34 @@ function handMovement(a, b) {
   return Math.min(distance(a[0], b[0]) + distance(a[1], b[1]), distance(a[0], b[1]) + distance(a[1], b[0]));
 }
 function edgeCost(a, b, bpm = 120) {
-  const handsA = a.internal.hands, handsB = b.internal.hands;
-  const move = handMovement(handsA.left, handsB.left) + handMovement(handsA.right, handsB.right);
+  const known = a.internal.hands.left && b.internal.hands.left;
+  const poolsA = known ? a.internal.hands : Object.fromEntries(Object.entries(a.internal.groups).map(([id, g]) => [id, g.notes]));
+  const poolsB = known ? b.internal.hands : Object.fromEntries(Object.entries(b.internal.groups).map(([id, g]) => [id, g.notes]));
+  const move = Object.keys(poolsA).reduce((n, id) => n + handMovement(poolsA[id], poolsB[id]), 0);
   const old = new Map(a.bindings.map(b => [b.pitch, b.serial]));
   const moved = b.bindings.filter(b => old.has(b.pitch) && old.get(b.pitch) !== b.serial).length;
-  const deltas = ['left', 'right'].flatMap(h => handsA[h].map((p, i) => {
-    const q = handsB[h][i];
-    return `${q.degree - p.degree}:${q.row - p.row}:${q.col - p.col}`;
-  }));
+  const notesA = Object.values(a.internal.groups).flatMap(g => g.notes);
+  const notesB = Object.values(b.internal.groups).flatMap(g => g.notes);
+  const deltas = notesA.map(p => {
+    const q = notesB.find(n => n.degree === p.degree);
+    return `${q.row - p.row}:${q.col - p.col}`;
+  });
   const sameForm = a.formId === b.formId;
-  const parallel = sameForm && new Set(deltas).size === 1 && deltas[0].startsWith('0:');
+  const parallel = sameForm && new Set(deltas).size === 1;
   return move * (bpm / 120) ** 2 + moved * 4 + (sameForm ? (parallel ? 0 : 1) : 2);
+}
+// intrinsicCostの出力は使わず、公開まとまりの座標と既定重みから費用を再計算。
+function intrinsicCost(candidate) {
+  const groups = Object.values(candidate.internal.groups).map(g => g.notes);
+  const span = group => Math.max(...group.flatMap(a => group.map(b => distance(a, b))));
+  return groups.reduce((n, g) => n + span(g), 0) + Math.abs(groups[0].length - groups[1].length) * 2 +
+    (candidate.formId === FORM2 ? 2 : 0);
 }
 function bruteThree(steps, bpm = 120) {
   const pools = steps.map(s => padEnumPerformancePositions(s, { bpm }).candidates);
   let minimum = Infinity;
   for (const a of pools[0]) for (const b of pools[1]) for (const c of pools[2]) {
-    const cost = b.metrics.intrinsicCost + c.metrics.intrinsicCost + edgeCost(a, b, bpm) + edgeCost(b, c, bpm);
+    const cost = intrinsicCost(b) + intrinsicCost(c) + edgeCost(a, b, bpm) + edgeCost(b, c, bpm);
     minimum = Math.min(minimum, cost);
   }
   return minimum;
@@ -49,32 +65,42 @@ describe('演奏ロジックv2・受け入れ', () => {
     expect(r.results[1].metrics.transition.movedCommon).toBe(0);
     expect(r.results[0].source).toBe('seed');
   });
-  it('(b) 指間距離が増えるDm7→Em7では第2フォームへ切り替える', () => {
-    // 指示のDm7実音高/serialは未指定。本fixtureの入力を明記し、原演奏一致とは区別。
+  it('(b) 原文の期待: フォーム1のDm7からEm7でフォーム2へ切り替える', () => {
+    // 期待formIdは6031940436から先に決定。Em7のserialを演奏正解とはしない。
+    const expectedForm = FORM2;
     const r = padResolvePerformanceSequence([DM, chord(4)]);
     expect(r.ok).toBe(true);
-    expect(r.results[0].formId).toBe('paired-fifths');
-    expect(r.results[0].metrics.leftSpan).toBe(3);
-    expect(r.results[1].formId).toBe('right-root-seventh');
+    expect(r.results[0].formId).toBe(FORM1);
+    const cmShape = [[60, 72], [63, 75], [67, 82], [70, 88]];
+    for (let i = 0; i < cmShape.length; i++) {
+      const cm = padSerialToRowCol(cmShape[i][1]);
+      const dm = padSerialToRowCol(DM.explicit[i].serial);
+      expect([dm.row - cm.row, dm.col - cm.col]).toEqual([-2, 0]);
+      expect(DM.explicit[i].pitch - cmShape[i][0]).toBe(-10);
+    }
+    expect(r.results[0].metrics.groupSpans).toEqual({ 'root-seventh': 2, 'third-fifth': 2 });
+    expect(r.results[1].formId).toBe(expectedForm);
     expect(r.results[1].internal.hands.right.map(b => b.degree)).toEqual([0, 10]);
     expect(r.results[1].internal.hands.left.map(b => b.degree)).toEqual([3, 7]);
-    expect(r.results[1].metrics.transition.parallel).toBe(false);
-    expect(r.results[1].metrics.leftSpan).toBe(2);
-    expect(r.results[1].metrics.rightSpan).toBe(2);
-    // 上限のみを緩めると、片手内距離5の近い第1フォームが勝つ。
-    const relaxed = padResolvePerformanceSequence([DM, chord(4)], { model: { limits: { maxHandDistance: 5 } } });
-    expect(relaxed.results[1].formId).toBe('paired-fifths');
-    expect(relaxed.results[1].metrics.leftSpan).toBe(5);
-    expect(relaxed.totalCost).toBeLessThan(r.totalCost);
+    expect(r.results[1].metrics.transition.switched).toBe(true);
+    // 診断という性質の確認。フォーム1も弾け、距離は増えない。
+    const stay = padResolvePerformanceSequence([DM, { ...chord(4), formId: FORM1 }]);
+    expect(stay.ok).toBe(true);
+    expect(stay.results[1].metrics.transition.parallel).toBe(true);
+    expect(stay.results[1].metrics.groupSpans).toEqual(r.results[1].metrics.groupSpans);
+    expect(r.results[1].metrics.transition.movement).toBeLessThan(stay.results[1].metrics.transition.movement);
+    expect(r.totalCost).toBe(stay.totalCost); // 同費用のserial順。指距離による禁止ではない。
+    const noReachLimit = padResolvePerformanceSequence([DM, chord(4)], { model: { limits: { maxHandDistance: 14 } } });
+    expect(noReachLimit.results[1].formId).toBe(expectedForm);
   });
-  it('(c) BPMを上げると移動の大きい並びを避ける', () => {
+  it('(c) 性質の確認: BPMを上げると移動の大きい並びを避ける', () => {
     const steps = [SEED, chord(0), chord(3)];
     const slow = padResolvePerformanceSequence(steps, { bpm: 60 });
     const fast = padResolvePerformanceSequence(steps, { bpm: 240 });
     expect(slow.ok && fast.ok).toBe(true);
-    expect(movement(slow)).toBe(12); expect(movement(fast)).toBe(6);
-    expect(serials(slow.results[2])).toEqual([57, 63, 67, 73]);
-    expect(serials(fast.results[2])).toEqual([57, 63, 70, 73]);
+    expect(movement(fast)).toBeLessThan(movement(slow));
+    expect(serials(slow.results[2])).not.toEqual(serials(fast.results[2]));
+    expect(slow.totalCost).toBe(bruteThree(steps, 60));
     expect(fast.totalCost).toBe(bruteThree(steps, 240));
   });
   it('(d) 指定区間では同じフォームの厳密な平行移動を選ぶ', () => {
@@ -84,26 +110,65 @@ describe('演奏ロジックv2・受け入れ', () => {
     expect(normal.results[2].metrics.transition.parallel).toBe(false);
     expect(style.ok).toBe(true);
     expect(style.results.slice(1).every(r => r.metrics.transition.parallel)).toBe(true);
-    expect(serials(style.results[2])).toEqual([60, 63, 70, 73]);
-    expect(style.results.every(r => r.formId === 'paired-fifths')).toBe(true);
+    // Cm7→Ebm7は(row+1,col-2)で+3半音の同形。実装から逆算しない。
+    expect(serials(style.results[2])).toEqual(SEED.explicit.map(b => b.serial + 6));
+    expect(style.results.every(r => r.formId === FORM1)).toBe(true);
   });
-  it('先読みは貪欲な選択を変え、全組合せの最小費用に一致する', () => {
-    const steps = [SEED, chord(1), chord(8)];
+  it('性質の確認: 先読みは貪欲な選択を変え、全組合せの最小費用に一致する', () => {
+    const steps = [SEED, chord(2), chord(4)];
     const full = padResolvePerformanceSequence(steps);
     const pair = padResolvePerformanceSequence(steps.slice(0, 2));
     const greedy = padResolvePerformanceSequence([SEED,
-      { ...chord(1), explicit: pair.results[1].bindings, formId: pair.results[1].formId }, chord(8)]);
+      { ...chord(2), explicit: pair.results[1].bindings, formId: pair.results[1].formId }, chord(4)]);
     const greedyTotal = pair.totalCost + greedy.results[2].metrics.intrinsicCost + greedy.results[2].metrics.transition.cost;
-    expect(full.totalCost).toBe(36); expect(greedyTotal).toBe(37);
+    expect(full.totalCost).toBeLessThan(greedyTotal);
     expect(serials(full.results[1])).not.toEqual(serials(pair.results[1]));
     expect(full.totalCost).toBe(bruteThree(steps));
   });
 });
 
 describe('手本・手のまとまり・入力の主体性', () => {
+  it.each([
+    [FORM1, [[60, 72], [63, 75], [67, 82], [70, 88]]],
+    [FORM2, [[60, 72], [63, 78], [67, 85], [70, 88]]],
+  ])('原文で訂正されたCm7手本を通常候補として再生成: %s', (formId, expected) => {
+    // 指示パックの確定手本を直接書く。data.jsから期待値を作らない。
+    const enumeration = padEnumPerformancePositions({ root: 0, quality: 'm7', pitches: [60, 63, 67, 70] });
+    expect(enumeration.ok).toBe(true);
+    const matches = enumeration.candidates.filter(c => JSON.stringify(pairs(c)) === JSON.stringify(expected));
+    expect(matches).toHaveLength(1);
+    const candidate = matches[0];
+    expect(candidate.formId).toBe(formId);
+    expect(candidate.internal.fixed).toBe(false);
+    expect(candidate.metrics.exceedsReach).toBe(false);
+    expect(candidate.metrics.groupSpans).toEqual({ 'root-seventh': 2, 'third-fifth': 2 });
+    expect(candidate.internal.groups['root-seventh'].notes.map(n => n.degree)).toEqual([0, 10]);
+    expect(candidate.internal.groups['third-fifth'].notes.map(n => n.degree)).toEqual([3, 7]);
+    expect(PAD_POSITION_MODEL_V2.forms.m7.find(f => f.id === formId).reference).toEqual(B(expected));
+    if (formId === FORM1) {
+      expect(candidate.internal.hands).toEqual({ left: null, right: null });
+      expect(Object.values(candidate.internal.groups).map(g => g.hand)).toEqual(['unknown', 'unknown']);
+      expect(candidate.metrics.leftSpan).toBeNull();
+      expect(candidate.metrics.rightSpan).toBeNull();
+    } else {
+      expect(candidate.internal.hands.right.map(n => n.degree)).toEqual([0, 10]);
+      expect(candidate.internal.hands.left.map(n => n.degree)).toEqual([3, 7]);
+    }
+    // 距離2という手本を上限2でも排除しない。
+    const tight = padEnumPerformancePositions({ root: 0, quality: 'm7', pitches: [60, 63, 67, 70], formId },
+      { model: { limits: { maxHandDistance: 2 } } });
+    expect(tight.candidates.some(c => JSON.stringify(pairs(c)) === JSON.stringify(expected))).toBe(true);
+  });
+  it('formId未指定のHPS4はフォーム2。明示したformIdと位置は矛盾しても固定する', () => {
+    expect(padEnumPerformancePositions(HPS).candidates[0].formId).toBe(FORM2);
+    const mismatched = padEnumPerformancePositions({ ...HPS, formId: FORM1 }).candidates[0];
+    expect(mismatched.formId).toBe(FORM1);
+    expect(pairs(mismatched)).toEqual([[60, 72], [63, 78], [67, 85], [70, 88]]);
+    expect(mismatched.metrics.matchesGeometry).toBe(false);
+  });
   it('m7の2フォームとdom7の使用傾向、理由を内部で持つ', () => {
     const minor = padEnumPerformancePositions(chord(0));
-    expect(new Set(minor.candidates.map(c => c.formId))).toEqual(new Set(['paired-fifths', 'right-root-seventh']));
+    expect(new Set(minor.candidates.map(c => c.formId))).toEqual(new Set([FORM1, FORM2]));
     const alt = minor.candidates.find(c => c.formId === 'right-root-seventh');
     expect(alt.metrics.costs.usage).toBe(2);
     expect(alt.internal.reason).toContain('5度へのクロマチック');
@@ -116,13 +181,12 @@ describe('手本・手のまとまり・入力の主体性', () => {
   it('同じ手のまとまりでも距離上限を超える配置は候補に入れない', () => {
     const r = padEnumPerformancePositions(chord(4));
     expect(r.rejectedByReach).toBeGreaterThan(0);
-    expect(r.candidates.every(c => Math.max(c.metrics.leftSpan, c.metrics.rightSpan) <= 4)).toBe(true);
-    const bad = r.candidates.find(c => c.formId === 'paired-fifths' && serials(c).join() === '58,64,71,74');
-    expect(bad).toBeUndefined();
+    expect(r.candidates.every(c => !c.metrics.exceedsReach && c.metrics.matchesGeometry)).toBe(true);
+    expect(r.candidates.every(c => Object.values(c.metrics.groupSpans).every(span => span <= 4))).toBe(true);
   });
   it('seed/overrideは距離上限が低くても勝手に書き換えない', () => {
     const override = { ...FM, explicit: B([[60, 72], [63, 78], [65, 80], [68, 83]]) };
-    const r = padResolvePerformanceSequence([HPS, override]);
+    const r = padResolvePerformanceSequence([HPS, override], { model: { limits: { maxHandDistance: 1 } } });
     expect(r.ok).toBe(true);
     expect(pairs(r.results[0])).toEqual(pairs({ bindings: HPS.explicit }));
     expect(pairs(r.results[1])).toEqual(pairs({ bindings: override.explicit }));
@@ -141,8 +205,7 @@ describe('手本・手のまとまり・入力の主体性', () => {
   it('平行移動の距離は不変。特定キーの禁止規則を作らない', () => {
     const r = padResolvePerformanceSequence([SEED, chord(3)], { constantStructure: [{ from: 0, to: 1 }] });
     expect(r.ok).toBe(true);
-    expect(r.results[1].metrics.leftSpan).toBe(r.results[0].metrics.leftSpan);
-    expect(r.results[1].metrics.rightSpan).toBe(r.results[0].metrics.rightSpan);
+    expect(r.results[1].metrics.groupSpans).toEqual(r.results[0].metrics.groupSpans);
   });
   it('様式とoverrideが衝突したらoverrideを動かさず止まる', () => {
     const overridden = { ...chord(1), explicit: B([[49, 55], [52, 61], [56, 65], [59, 71]]) };
@@ -176,7 +239,7 @@ describe('手本・手のまとまり・入力の主体性', () => {
     expect(JSON.stringify({ steps, options })).toBe(before);
     steps.forEach(s => { s.pitches.reverse(); s.pitches.push(s.pitches[0]); if (s.explicit) s.explicit.reverse(); });
     expect(padResolvePerformanceSequence(steps, options)).toEqual(a);
-    expect(Object.isFrozen(PAD_POSITION_MODEL_V2.forms.m7[0].left)).toBe(true);
+    expect(Object.isFrozen(PAD_POSITION_MODEL_V2.forms.m7[0].groups[0].degrees)).toBe(true);
   });
   it('octaveShiftはpitchだけを変え、盤面を差し替えない', () => {
     const shifted = [HPS, FM].map(s => ({ ...s, pitches: s.pitches.map(p => p + 12),
@@ -210,6 +273,15 @@ describe('不正入力・探索上限・失敗の境界', () => {
     { model: { referenceBpm: 0 } }, { model: { limits: { maxCandidates: 129 } } },
     { model: { limits: { maxSteps: 0 } } },
     { model: { forms: { m7: [{ id: 'bad', left: [0, 7], right: [7, 10], usageCost: 0 }] } } },
+    { model: { forms: { m7: [{ id: 'bad', groups: [
+      { id: 'a', degrees: [0, 10], hand: 'left' }, { id: 'b', degrees: [3, 7], hand: 'left' },
+    ], usageCost: 0 }] } } },
+    { model: { forms: { m7: [{ id: 'bad', groups: [
+      { id: 'a', degrees: [0, 10], hand: 'unknown' }, { id: 'a', degrees: [3, 7], hand: 'unknown' },
+    ], usageCost: 0 }] } } },
+    { model: { forms: { m7: [{ id: 'bad', groups: [
+      { id: 'a', degrees: [0, 10], hand: 'unknown' }, { id: 'b', degrees: [3, 7], hand: 'unknown' },
+    ], geometry: { group: 'missing', relativeTo: 'a', side: 'right' }, usageCost: 0 }] } } },
   ])('不正モデルを拒否: %j', options => {
     expect(padResolvePerformanceSequence([SEED, chord(1)], options).reason).toBe('invalid_model');
   });

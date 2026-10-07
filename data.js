@@ -1322,9 +1322,10 @@ function padInstallGuitarSourcePatternSeeds() {
 padInstallGuitarSourcePatternSeeds();
 
 // 押さえ方v2。数値は原文の測定値ではなく、手本で調整する初期仮説。
-// 距離単位: 盤面マンハッタン距離。手・度数は内部情報で表示しない。
+// 距離単位: 同じまとまりの中の盤面マンハッタン距離。上限4も初期仮説。
+// 手・度数は内部情報。フォーム1の手はunknownのまま推定しない。
 var PAD_POSITION_MODEL_V2 = {
-  version: 'performance-v2',
+  version: 'performance-v2-corrected-forms',
   limits: { maxHandDistance: 4, maxSteps: 512, maxCandidates: 128 },
   referenceBpm: 120,
   weights: {
@@ -1340,13 +1341,33 @@ var PAD_POSITION_MODEL_V2 = {
   // 範囲指定された様式は重みでなく、同じ度数形の平行移動という制約。
   forms: {
     m7: [
-      { id: 'paired-fifths', left: [0, 7], right: [3, 10], usageCost: 0,
-        reason: 'HPS4/S08: 左R+5・右m3+b7。第1フォーム。5度への修飾を優先。' },
-      { id: 'right-root-seventh', left: [3, 7], right: [0, 10], usageCost: 1,
-        reason: '#14 6031973162: 右R+b7はm7で使用頻度が低い。5度へのクロマチックアプローチがしにくい。' },
+      { id: 'root-seventh-third-fifth-right',
+        groups: [
+          { id: 'root-seventh', degrees: [0, 10], hand: 'unknown' },
+          { id: 'third-fifth', degrees: [3, 7], hand: 'unknown' },
+        ],
+        geometry: { group: 'third-fifth', relativeTo: 'root-seventh', side: 'right' },
+        reference: [{ pitch: 60, serial: 72 }, { pitch: 63, serial: 75 },
+          { pitch: 67, serial: 82 }, { pitch: 70, serial: 88 }],
+        usageCost: 0,
+        reason: '#14 6031912323: フォーム1。R+b7のまとまりと右側のm3+5のまとまり。左右の手は原文未指定。' },
+      { id: 'right-root-seventh',
+        groups: [
+          { id: 'root-seventh', degrees: [0, 10], hand: 'right' },
+          { id: 'third-fifth', degrees: [3, 7], hand: 'left' },
+        ],
+        geometry: { group: 'third-fifth', relativeTo: 'root-seventh', side: 'left' },
+        reference: [{ pitch: 60, serial: 72 }, { pitch: 63, serial: 78 },
+          { pitch: 67, serial: 85 }, { pitch: 70, serial: 88 }],
+        usageCost: 1,
+        reason: 'HPS4: フォーム2。右R+b7・左m3+5。#14 6031973162: 5度へのクロマチックアプローチがしにくい。' },
     ],
     dom7: [
-      { id: 'right-root-seventh', left: [4, 7], right: [0, 10], usageCost: 0,
+      { id: 'right-root-seventh',
+        groups: [
+          { id: 'root-seventh', degrees: [0, 10], hand: 'right' },
+          { id: 'third-fifth', degrees: [4, 7], hand: 'left' },
+        ], usageCost: 0,
         reason: '#14 6031982826: dom7で右R+b7を多用。3度へのクロマチックアプローチがしやすい。' },
     ],
   },

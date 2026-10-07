@@ -785,19 +785,41 @@ function _padPositionConfig(options) {
   }
   var factor = Math.pow(bpm / model.referenceBpm, 2);
   if (!Number.isFinite(factor * model.weights.movement)) return null;
+  var normalizedForms = Object.create(null);
   for (var quality of Object.keys(model.forms)) {
     var forms = model.forms[quality], ids = new Set();
     if (!Array.isArray(forms) || forms.length === 0 || forms.length > base.limits.maxCandidates) return null;
+    normalizedForms[quality] = [];
     for (var form of forms) {
       if (!form || typeof form.id !== 'string' || !form.id || ids.has(form.id) ||
-          !Array.isArray(form.left) || !Array.isArray(form.right) || !form.left.length || !form.right.length ||
           typeof form.usageCost !== 'number' || !Number.isFinite(form.usageCost) || form.usageCost < 0) return null;
       ids.add(form.id);
-      var degrees = form.left.concat(form.right);
+      // 既存の調整用left/right手本も受ける。既定m7は手を推定しないgroups形式。
+      var groups = form.groups;
+      if (groups === undefined) {
+        if (!Array.isArray(form.left) || !Array.isArray(form.right)) return null;
+        groups = [{ id: 'left', degrees: form.left, hand: 'left' }, { id: 'right', degrees: form.right, hand: 'right' }];
+      }
+      if (!Array.isArray(groups) || groups.length !== 2) return null;
+      var degrees = [], groupIds = new Set(), assignedHands = new Set();
+      for (var group of groups) {
+        if (!group || typeof group.id !== 'string' || !group.id || groupIds.has(group.id) ||
+            !Array.isArray(group.degrees) || !group.degrees.length || !['left', 'right', 'unknown'].includes(group.hand)) return null;
+        if (group.hand !== 'unknown') {
+          if (assignedHands.has(group.hand)) return null;
+          assignedHands.add(group.hand);
+        }
+        groupIds.add(group.id);
+        degrees = degrees.concat(group.degrees);
+      }
       if (degrees.length > PAD_NEAREST_MAX_PITCHES || new Set(degrees).size !== degrees.length ||
           !degrees.includes(0) || degrees.some(function(d) { return !Number.isInteger(d) || d < 0 || d > 11; })) return null;
+      if (form.geometry !== undefined && (!form.geometry || typeof form.geometry !== 'object' || Array.isArray(form.geometry) || !groupIds.has(form.geometry.group) || !groupIds.has(form.geometry.relativeTo) ||
+          form.geometry.group === form.geometry.relativeTo || !['left', 'right'].includes(form.geometry.side))) return null;
+      normalizedForms[quality].push(Object.assign({}, form, { groups: groups }));
     }
   }
+  model.forms = normalizedForms;
   return { model: model, bpm: bpm, movementWeight: model.weights.movement * factor };
 }
 
@@ -814,19 +836,31 @@ function _padPositionHandSpan(hand) {
 function _padPositionCandidate(bindings, root, form, cfg, fixed) {
   var degrees = {};
   bindings.forEach(function(b) { degrees[((b.pitch - root) % 12 + 12) % 12] = b; });
-  var hands = {};
-  ['left', 'right'].forEach(function(hand) {
-    hands[hand] = form[hand].slice().sort(function(a, b) { return a - b; }).map(function(d) {
+  var groups = Object.create(null), hands = { left: null, right: null }, groupSpans = Object.create(null);
+  form.groups.forEach(function(group) {
+    var notes = group.degrees.slice().sort(function(a, b) { return a - b; }).map(function(d) {
       return Object.assign({ degree: d }, degrees[d]);
     });
+    groups[group.id] = { notes: notes, hand: group.hand };
+    groupSpans[group.id] = _padPositionHandSpan(notes);
+    if (group.hand !== 'unknown') hands[group.hand] = notes;
   });
-  var leftSpan = _padPositionHandSpan(hands.left), rightSpan = _padPositionHandSpan(hands.right);
-  var unreachable = Math.max(leftSpan, rightSpan) > cfg.model.limits.maxHandDistance;
-  if (unreachable && !fixed) return null;
-  var balance = Math.abs(hands.left.length - hands.right.length);
+  // 手の左右と盤面の左右を分ける。手本の向きを対の平均列で分類する初期仮説。
+  // 平均が同じ転回配置は両フォームに属し得る（HPS4→Fm7を排除しない）。
+  var matchesGeometry = true;
+  if (form.geometry) {
+    var geometry = form.geometry;
+    function meanCol(id) { return groups[id].notes.reduce(function(n, b) { return n + b.col; }, 0) / groups[id].notes.length; }
+    var delta = meanCol(geometry.group) - meanCol(geometry.relativeTo);
+    matchesGeometry = geometry.side === 'right' ? delta >= 0 : delta <= 0;
+  }
+  var spans = Object.values(groupSpans);
+  var unreachable = Math.max.apply(null, spans) > cfg.model.limits.maxHandDistance;
+  if ((!matchesGeometry || unreachable) && !fixed) return null;
+  var balance = Math.abs(form.groups[0].degrees.length - form.groups[1].degrees.length);
   var weights = cfg.model.weights;
   var costs = {
-    fingerDistance: weights.fingerDistance * (leftSpan + rightSpan),
+    fingerDistance: weights.fingerDistance * spans.reduce(function(a, b) { return a + b; }, 0),
     balance: weights.balance * balance,
     usage: weights.usage * form.usageCost,
   };
@@ -834,9 +868,11 @@ function _padPositionCandidate(bindings, root, form, cfg, fixed) {
   if (!Number.isFinite(cost)) return null;
   return {
     ok: true, bindings: bindings, formId: form.id,
-    internal: { hands: hands, reason: form.reason || '', fixed: fixed },
-    metrics: { leftSpan: leftSpan, rightSpan: rightSpan, balance: balance,
-      exceedsReach: unreachable, costs: costs, intrinsicCost: cost },
+    internal: { groups: groups, hands: hands, reason: form.reason || '', fixed: fixed },
+    metrics: { groupSpans: groupSpans,
+      leftSpan: hands.left === null ? null : _padPositionHandSpan(hands.left),
+      rightSpan: hands.right === null ? null : _padPositionHandSpan(hands.right), balance: balance,
+      matchesGeometry: matchesGeometry, exceedsReach: unreachable, costs: costs, intrinsicCost: cost },
   };
 }
 
@@ -846,7 +882,7 @@ function _padPositionCandidate(bindings, root, form, cfg, fixed) {
  * options={octaveShift?, bpm?, model?:{version?,weights?,limits?,referenceBpm?,forms?}}。
  * 既定はm7の2つとdom7の右R+b7。指の推定・UI表示は行わない。
  * 同じ度数の重複オクターブ・shell・未登録の質は黙って一般形へ逃げない。
- * explicitは固定。未指定のformIdはその質の最初の手本を使う。
+ * explicitは固定。未指定のformIdは幾何に合う最初の手本を使う。
  * 指間距離を超えるexplicitも動かさず、metrics.exceedsReachで伝える。
  */
 function padEnumPerformancePositions(step, options) {
@@ -864,7 +900,7 @@ function padEnumPerformancePositions(step, options) {
   if (pitches.length > PAD_NEAREST_MAX_PITCHES) return _padNearestFail('too_many_pitches');
   var degrees = pitches.map(function(p) { return ((p - step.root) % 12 + 12) % 12; }).sort(function(a, b) { return a - b; });
   var forms = allForms.filter(function(f) {
-    var expected = f.left.concat(f.right).sort(function(a, b) { return a - b; });
+    var expected = f.groups.flatMap(function(g) { return g.degrees; }).sort(function(a, b) { return a - b; });
     return expected.length === degrees.length && expected.every(function(d, i) { return d === degrees[i]; });
   });
   if (!forms.length) return _padNearestFail('unsupported_voicing');
@@ -882,7 +918,10 @@ function padEnumPerformancePositions(step, options) {
     if (explicit.length !== pitches.length || explicit.some(function(b, i) { return b.pitch !== pitches[i]; })) {
       return _padNearestFail('explicit_pitch_mismatch');
     }
-    forms = [forms[0]];
+    // formId未指定なら手本の幾何に合うフォームを選ぶ。指定formIdは動かさない。
+    forms = [forms.find(function(form) {
+      return _padPositionCandidate(explicit, step.root, form, cfg, true).metrics.matchesGeometry;
+    }) || forms[0]];
     pools = explicit.map(function(b) { return [b]; });
   } else {
     var layout = padNearestLayout(options);
@@ -897,12 +936,17 @@ function padEnumPerformancePositions(step, options) {
   // 上限で候補を切り捨てて最適と称さず、探索自体を明示的に止める。
   var count = pools.reduce(function(n, pool) { return n * pool.length; }, forms.length);
   if (count > cfg.model.limits.maxCandidates) return _padNearestFail('too_many_candidates');
-  var candidates = [], chosen = [], rejected = 0;
+  var candidates = [], chosen = [], rejected = 0, rejectedGeometry = 0;
   function walk(index) {
     if (index === pools.length) {
       forms.forEach(function(form) {
         var candidate = _padPositionCandidate(chosen.slice(), step.root, form, cfg, fixed);
-        if (candidate) candidates.push(candidate); else rejected++;
+        if (candidate) candidates.push(candidate);
+        else {
+          var diagnostic = _padPositionCandidate(chosen.slice(), step.root, form, cfg, true);
+          if (diagnostic.metrics.exceedsReach) rejected++;
+          if (!diagnostic.metrics.matchesGeometry) rejectedGeometry++;
+        }
       });
       return;
     }
@@ -915,31 +959,41 @@ function padEnumPerformancePositions(step, options) {
     }
     return a.formId < b.formId ? -1 : a.formId > b.formId ? 1 : 0;
   });
-  if (!candidates.length) return _padNearestFail('no_playable_form', { rejectedByReach: rejected });
-  return { ok: true, candidates: candidates, rejectedByReach: rejected };
+  if (!candidates.length) return _padNearestFail('no_playable_form', { rejectedByReach: rejected, rejectedByGeometry: rejectedGeometry });
+  return { ok: true, candidates: candidates, rejectedByReach: rejected, rejectedByGeometry: rejectedGeometry };
 }
 
 // 同じ度数の位置差が全て一致する時だけ厳密な平行移動。
 function _padPositionParallel(a, b) {
   if (a.formId !== b.formId) return false;
   var dr = null, dc = null;
-  for (var hand of ['left', 'right']) {
-    var prev = a.internal.hands[hand], next = b.internal.hands[hand];
-    if (prev.length !== next.length) return false;
-    for (var i = 0; i < prev.length; i++) {
-      if (prev[i].degree !== next[i].degree) return false;
-      var r = next[i].row - prev[i].row, c = next[i].col - prev[i].col;
-      if (dr === null) { dr = r; dc = c; }
-      if (r !== dr || c !== dc) return false;
-    }
+  // 度数はgroupsに持つ。手のunknownに左右を補わず同形を判定する。
+  var prevNotes = Object.values(a.internal.groups).flatMap(function(g) { return g.notes; });
+  var nextNotes = Object.values(b.internal.groups).flatMap(function(g) { return g.notes; });
+  if (prevNotes.length !== nextNotes.length) return false;
+  for (var p of prevNotes) {
+    var q = nextNotes.find(function(n) { return n.degree === p.degree; });
+    if (!q) return false;
+    var r = q.row - p.row, c = q.col - p.col;
+    if (dr === null) { dr = r; dc = c; }
+    if (r !== dr || c !== dc) return false;
   }
   return true;
 }
 
 function _padPositionTransition(a, b, cfg) {
   var movement = 0;
-  // 左右を混ぜた最適対応にせず、各手の最適対応を別々に求める。
-  for (var hand of ['left', 'right']) movement += _padMinManhattanMatching(a.internal.hands[hand], b.internal.hands[hand]);
+  var movementBasis;
+  if (a.internal.hands.left && a.internal.hands.right && b.internal.hands.left && b.internal.hands.right) {
+    movementBasis = 'known-hands';
+    for (var hand of ['left', 'right']) movement += _padMinManhattanMatching(a.internal.hands[hand], b.internal.hands[hand]);
+  } else {
+    // 左右未指定なら同じ役割のまとまり同士。手を推定した移動費用ではない。
+    movementBasis = 'role-groups';
+    var groupIds = Object.keys(a.internal.groups);
+    if (groupIds.some(function(id) { return !b.internal.groups[id]; })) return { cost: Infinity };
+    for (var id of groupIds) movement += _padMinManhattanMatching(a.internal.groups[id].notes, b.internal.groups[id].notes);
+  }
   var prev = {};
   a.bindings.forEach(function(p) { prev[p.pitch] = p.serial; });
   var movedCommon = b.bindings.filter(function(p) { return prev[p.pitch] !== undefined && prev[p.pitch] !== p.serial; }).length;
@@ -951,7 +1005,7 @@ function _padPositionTransition(a, b, cfg) {
     formSwitch: switched ? cfg.model.weights.formSwitch : 0,
     shapeChange: !switched && !parallel ? cfg.model.weights.shapeChange : 0,
   };
-  return { movement: movement, movedCommon: movedCommon, switched: switched, parallel: parallel,
+  return { movement: movement, movementBasis: movementBasis, movedCommon: movedCommon, switched: switched, parallel: parallel,
     costs: costs, cost: costs.movement + costs.movedCommon + costs.formSwitch + costs.shapeChange };
 }
 
